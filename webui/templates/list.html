@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card shadow-sm">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span>Recent snippets</span>
+    <a class="btn btn-sm btn-primary" href="{{ url_for('new_snippet') }}">Add new</a>
+  </div>
+  <div class="list-group list-group-flush">
+    {% if rows %}
+      {% for r in rows %}
+        <a class="list-group-item list-group-item-action" href="{{ url_for('view_snippet', sid=r.id) }}">
+          <div class="d-flex w-100 justify-content-between">
+            <h6 class="mb-1">{{ r.book_name or "Untitled" }}</h6>
+            <small class="text-muted">{{ r.created_utc }}</small>
+          </div>
+          <small class="text-muted">
+            {% if r.page_number %}p. {{ r.page_number }}{% endif %}
+            {% if r.chapter %}{% if r.page_number %} · {% endif %}ch. {{ r.chapter }}{% endif %}
+            {% if r.verse %}{% if r.page_number or r.chapter %} · {% endif %}v. {{ r.verse }}{% endif %}
+          </small>
+          <div class="mt-1 text-truncate">{{ r.preview }}</div>
+        </a>
+      {% endfor %}
+    {% else %}
+      <div class="list-group-item">No snippets yet.</div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

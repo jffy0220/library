@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card shadow-sm">
+  <div class="card-header">{{ 'View snippet' if readonly else 'New snippet' }}</div>
+  <div class="card-body">
+    <form method="post">
+      <div class="row g-3">
+        <div class="col-md-4">
+          <label class="form-label">Date read (YYYY-MM-DD)</label>
+          <input name="date_read" class="form-control" value="{{ row.date_read if row else '' }}" {% if readonly %}readonly{% endif %}>
+        </div>
+        <div class="col-md-8">
+          <label class="form-label">Book name</label>
+          <input name="book_name" class="form-control" value="{{ row.book_name if row else '' }}" {% if readonly %}readonly{% endif %}>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Page number</label>
+          <input name="page_number" class="form-control" value="{{ row.page_number if row and row.page_number is not none else '' }}" {% if readonly %}readonly{% endif %}>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Chapter</label>
+          <input name="chapter" class="form-control" value="{{ row.chapter if row else '' }}" {% if readonly %}readonly{% endif %}>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Verse</label>
+          <input name="verse" class="form-control" value="{{ row.verse if row else '' }}" {% if readonly %}readonly{% endif %}>
+        </div>
+        <div class="col-12">
+          <label class="form-label">Text snippet</label>
+          <textarea name="text_snippet" class="form-control" rows="5" {% if readonly %}readonly{% endif %}>{{ row.text_snippet if row else '' }}</textarea>
+          <div class="form-text">Optional. Leave blank if you’re only saving your thoughts.</div>
+        </div>
+        <div class="col-12">
+          <label class="form-label">Thoughts</label>
+          <textarea name="thoughts" class="form-control" rows="4" {% if readonly %}readonly{% endif %}>{{ row.thoughts if row else '' }}</textarea>
+        </div>
+      </div>
+      {% if not readonly %}
+      <div class="mt-3">
+        <button class="btn btn-primary" type="submit">Submit</button>
+        <a class="btn btn-secondary" href="{{ url_for('index') }}">Cancel</a>
+      </div>
+      {% else %}
+      <div class="mt-3">
+        <a class="btn btn-secondary" href="{{ url_for('index') }}">Back</a>
+      </div>
+      {% endif %}
+    </form>
+  </div>
+</div>
+{% endblock %}
