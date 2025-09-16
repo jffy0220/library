@@ -8,10 +8,24 @@ export default function ViewSnippet() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    (async () => {
-      try { setRow(await getSnippet(id)) }
-      finally { setLoading(false) }
+    let ignore = false
+    ;(async () => {
+      try {
+        const data = await getSnippet(id)
+        if (!ignore) setRow(data)
+      } catch (err) {
+        if (!ignore) {
+          if (err?.response?.status === 404) {
+            setRow(null)
+          } else if (err?.response?.status !== 401) {
+            console.error('Failed to load snippet', err)
+          }
+        }
+      } finally {
+        if (!ignore) setLoading(false)
+      }
     })()
+    return () => { ignore = true }
   }, [id])
 
   if (loading) return <div>Loading…</div>

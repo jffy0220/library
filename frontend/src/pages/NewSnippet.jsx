@@ -12,7 +12,6 @@ export default function NewSnippet() {
     verse: '',
     text_snippet: '',
     thoughts: '',
-    created_by: ''          // <-- NEW
   })
 
   const [msg, setMsg] = useState('')
@@ -30,7 +29,7 @@ export default function NewSnippet() {
       date_read: form.date_read || null,
       text_snippet: form.text_snippet || null,
       thoughts: form.thoughts || null,
-      created_by: form.created_by || null
+      created_by: user?.username || null,
     }
     try {
       await createSnippet(payload)
@@ -57,8 +56,8 @@ export default function NewSnippet() {
             </div>
             <div className="col-md-6">
               <label className="form-label">User</label>
-              <input name="created_by" className="form-control" value={form.created_by} onChange={onChange}/>
-              <div className="form-text">Who’s creating this snippet (optional)</div>
+              <input className="form-control" value={user?.username || ''} readOnly />
+              <div className="form-text">Signed in user</div>
             </div>
             <div className="col-md-3">
               <label className="form-label">Page number</label>

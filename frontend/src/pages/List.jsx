@@ -7,10 +7,20 @@ export default function List() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    (async () => {
-      try { setRows(await listSnippets()) }
-      finally { setLoading(false) }
+    let ignore = false
+    ;(async () => {
+      try {
+        const data = await listSnippets()
+        if (!ignore) setRows(data)
+      } catch (err) {
+        if (!ignore && err?.response?.status !== 401) {
+          console.error('Failed to load snippets', err)
+        }
+      } finally {
+        if (!ignore) setLoading(false)
+      }
     })()
+    return () => { ignore = true }
   }, [])
 
   if (loading) return <div>Loading…</div>
