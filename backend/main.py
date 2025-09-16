@@ -6,7 +6,7 @@ from fastapi import FastAPI, HTTPException, Depends, Response, Cookie, status
 from fastapi.middleware.cors import CORSMiddleware
 import psycopg2
 import psycopg2.extras
-from pydantic import BaseModel
+from pydantic import BaseModel, conint
 from dotenv import load_dotenv
 from jose import JWTError, jwt
 from passlib.hash import bcrypt
@@ -43,6 +43,23 @@ class SnippetIn(BaseModel):
 class SnippetOut(SnippetIn):
     id: int
     created_utc: datetime
+
+class CommentCreate(BaseModel):
+    content: str
+
+class CommentVote(BaseModel):
+    vote: conint(ge=-1, le=1)
+
+class CommentOut(BaseModel):
+    id: int
+    snippet_id: int
+    user_id: int
+    username: str
+    content: str
+    created_utc: datetime
+    upvotes: int
+    downvotes: int
+    user_vote: int
 
 
 class UserOut(BaseModel):
@@ -101,6 +118,51 @@ def get_current_user(session_token: Optional[str] = Cookie(None)) -> UserOut:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     return user
 
+def fetch_comment(comment_id: int, user_id: int) -> Optional[CommentOut]:
+    with get_conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+        cur.execute(
+            """
+            SELECT c.id, c.snippet_id, c.user_id, u.username, c.content, c.created_utc,
+                   COALESCE(SUM(CASE WHEN v.vote = 1 THEN 1 ELSE 0 END), 0) AS upvotes,
+                   COALESCE(SUM(CASE WHEN v.vote = -1 THEN 1 ELSE 0 END), 0) AS downvotes,
+                   COALESCE((
+                       SELECT vote FROM comment_votes WHERE comment_id = c.id AND user_id = %s
+                   ), 0) AS user_vote
+            FROM comments c
+            JOIN users u ON u.id = c.user_id
+            LEFT JOIN comment_votes v ON v.comment_id = c.id
+            WHERE c.id = %s
+            GROUP BY c.id, c.snippet_id, c.user_id, u.username, c.content, c.created_utc
+            """,
+            (user_id, comment_id),
+        )
+        row = cur.fetchone()
+    if not row:
+        return None
+    return CommentOut(**dict(row))
+
+
+def list_comments_for_snippet(snippet_id: int, user_id: int) -> List[CommentOut]:
+    with get_conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+        cur.execute(
+            """
+            SELECT c.id, c.snippet_id, c.user_id, u.username, c.content, c.created_utc,
+                   COALESCE(SUM(CASE WHEN v.vote = 1 THEN 1 ELSE 0 END), 0) AS upvotes,
+                   COALESCE(SUM(CASE WHEN v.vote = -1 THEN 1 ELSE 0 END), 0) AS downvotes,
+                   COALESCE((
+                       SELECT vote FROM comment_votes WHERE comment_id = c.id AND user_id = %s
+                   ), 0) AS user_vote
+            FROM comments c
+            JOIN users u ON u.id = c.user_id
+            LEFT JOIN comment_votes v ON v.comment_id = c.id
+            WHERE c.snippet_id = %s
+            GROUP BY c.id, c.snippet_id, c.user_id, u.username, c.content, c.created_utc
+            ORDER BY c.created_utc DESC
+            """,
+            (user_id, snippet_id),
+        )
+        rows = cur.fetchall()
+    return [CommentOut(**dict(r)) for r in rows]
 
 app = FastAPI(title="Book Snippets API")
 
@@ -191,3 +253,70 @@ def get_snippet(sid: int, current_user: UserOut = Depends(get_current_user)):
     return SnippetOut(**dict(row))
 
 # run: uvicorn main:app --host 127.0.0.1 --port 8000 --reload
+
+@app.get("/api/snippets/{sid}/comments", response_model=List[CommentOut])
+def get_snippet_comments(sid: int, current_user: UserOut = Depends(get_current_user)):
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT 1 FROM snippets WHERE id = %s", (sid,))
+        if cur.fetchone() is None:
+            raise HTTPException(status_code=404, detail="Snippet not found")
+    return list_comments_for_snippet(sid, current_user.id)
+
+
+@app.post("/api/snippets/{sid}/comments", response_model=CommentOut, status_code=201)
+def create_snippet_comment(sid: int, payload: CommentCreate, current_user: UserOut = Depends(get_current_user)):
+    content = (payload.content or "").strip()
+    if not content:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Content is required")
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT 1 FROM snippets WHERE id = %s", (sid,))
+        if cur.fetchone() is None:
+            raise HTTPException(status_code=404, detail="Snippet not found")
+        cur.execute(
+            """
+            INSERT INTO comments (snippet_id, user_id, content)
+            VALUES (%s, %s, %s)
+            RETURNING id
+            """,
+            (sid, current_user.id, content),
+        )
+        comment_id = cur.fetchone()[0]
+        conn.commit()
+
+    comment = fetch_comment(comment_id, current_user.id)
+    if comment is None:
+        raise HTTPException(status_code=500, detail="Unable to load comment")
+    return comment
+
+
+@app.post("/api/comments/{comment_id}/vote", response_model=CommentOut)
+def set_comment_vote(comment_id: int, payload: CommentVote, current_user: UserOut = Depends(get_current_user)):
+    vote_value = int(payload.vote)
+    if vote_value not in (-1, 0, 1):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid vote value")
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT 1 FROM comments WHERE id = %s", (comment_id,))
+        if cur.fetchone() is None:
+            raise HTTPException(status_code=404, detail="Comment not found")
+        if vote_value == 0:
+            cur.execute(
+                "DELETE FROM comment_votes WHERE comment_id = %s AND user_id = %s",
+                (comment_id, current_user.id),
+            )
+        else:
+            cur.execute(
+                """
+                INSERT INTO comment_votes (comment_id, user_id, vote)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (comment_id, user_id) DO UPDATE SET vote = EXCLUDED.vote
+                """,
+                (comment_id, current_user.id, vote_value),
+            )
+        conn.commit()
+
+    comment = fetch_comment(comment_id, current_user.id)
+    if comment is None:
+        raise HTTPException(status_code=404, detail="Comment not found")
+    return comment

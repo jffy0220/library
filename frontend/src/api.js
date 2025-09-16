@@ -31,6 +31,21 @@ export async function getSnippet(id) {
   return data
 }
 
+export async function listSnippetComments(snippetId) {
+  const { data } = await api.get(`/snippets/${snippetId}/comments`)
+  return data
+}
+
+export async function createSnippetComment(snippetId, payload) {
+  const { data } = await api.post(`/snippets/${snippetId}/comments`, payload)
+  return data
+}
+
+export async function voteComment(commentId, payload) {
+  const { data } = await api.post(`/comments/${commentId}/vote`, payload)
+  return data
+}
+
 export async function login(credentials) {
   const { data } = await api.post('/auth/login', credentials)
   return data
