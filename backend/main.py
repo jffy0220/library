@@ -101,7 +101,7 @@ def get_user_with_password(username: str):
     return dict(row) if row else None
 
 
-def get_current_user(session_token: Optional[str] = Cookie(None)) -> UserOut:
+def get_current_user(session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME)) -> UserOut:
     if not session_token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     try:
