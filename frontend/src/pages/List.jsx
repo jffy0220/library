@@ -32,28 +32,27 @@ export default function List() {
       </div>
       <div className="list-group list-group-flush">
         {rows.length === 0 && <div className="list-group-item">No snippets yet.</div>}
-        {rows.map(r => (
-          <div key={r.id} className="list-group-item">
-            <div className="d-flex w-100 justify-content-between">
-              <h6 className="mb-1">
-                <Link to={`/snippet/${r.id}`}>{r.book_name || 'Untitled'}</Link>
-              </h6>
-              <small className="text-muted">{new Date(r.created_utc).toLocaleString()}</small>
-              <small className="text-muted">
-                {r.created_by ? <>by {r.created_by} · </> : null}
-                {r.page_number != null && <>p. {r.page_number}</>}
-                {r.chapter && <>{r.page_number != null ? ' · ' : ''}ch. {r.chapter}</>}
-                {r.verse && <>{(r.page_number != null || r.chapter) ? ' · ' : ''}v. {r.verse}</>}
-              </small>
+        {rows.map((r) => {
+          const meta = []
+          if (r.created_by_username) meta.push(`by ${r.created_by_username}`)
+          if (r.page_number != null) meta.push(`p. ${r.page_number}`)
+          if (r.chapter) meta.push(`ch. ${r.chapter}`)
+          if (r.verse) meta.push(`v. ${r.verse}`)
+          return (
+            <div key={r.id} className="list-group-item">
+              <div className="d-flex w-100 justify-content-between align-items-baseline gap-2">
+                <h6 className="mb-1 mb-sm-0">
+                  <Link to={`/snippet/${r.id}`}>{r.book_name || 'Untitled'}</Link>
+                </h6>
+                <small className="text-muted">{new Date(r.created_utc).toLocaleString()}</small>
+              </div>
+              {meta.length > 0 && (
+                <small className="text-muted d-block mt-1">{meta.join(' · ')}</small>
+              )}
+              <div className="mt-2">{(r.text_snippet || '').slice(0, 200)}</div>
             </div>
-            <small className="text-muted">
-              {r.page_number != null && <>p. {r.page_number}</>}
-              {r.chapter && <>{r.page_number != null ? ' · ' : ''}ch. {r.chapter}</>}
-              {r.verse && <>{(r.page_number != null || r.chapter) ? ' · ' : ''}v. {r.verse}</>}
-            </small>
-            <div className="mt-1">{(r.text_snippet || '').slice(0, 200)}</div>
-          </div>
-        ))}
+          )
+        })}
       </div>
     </div>
   )

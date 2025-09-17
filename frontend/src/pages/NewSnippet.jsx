@@ -26,12 +26,13 @@ export default function NewSnippet() {
   const onSubmit = async (e) => {
     e.preventDefault()
     const payload = {
-      ...form,
-      page_number: form.page_number === '' ? null : Number(form.page_number),
       date_read: form.date_read || null,
+      book_name: form.book_name || null,
+      page_number: form.page_number === '' ? null : Number(form.page_number),
+      chapter: form.chapter || null,
+      verse: form.verse || null,
       text_snippet: form.text_snippet || null,
       thoughts: form.thoughts || null,
-      created_by: user?.username || null,
     }
     try {
       await createSnippet(payload)

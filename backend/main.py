@@ -30,7 +30,7 @@ SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", "0").lower() in {"1",
 def get_conn():
     return psycopg2.connect(**DB_CFG)
 
-class SnippetIn(BaseModel):
+class SnippetBase(BaseModel):
     date_read: Optional[date] = None
     book_name: Optional[str] = None
     page_number: Optional[int] = None
@@ -38,14 +38,31 @@ class SnippetIn(BaseModel):
     verse: Optional[str] = None
     text_snippet: Optional[str] = None
     thoughts: Optional[str] = None
-    created_by: Optional[str] = None
 
-class SnippetOut(SnippetIn):
+class SnippetCreate(SnippetBase):
+    pass
+
+
+class SnippetUpdate(BaseModel):
+    date_read: Optional[date] = None
+    book_name: Optional[str] = None
+    page_number: Optional[int] = None
+    chapter: Optional[str] = None
+    verse: Optional[str] = None
+    text_snippet: Optional[str] = None
+    thoughts: Optional[str] = None
+
+class SnippetOut(SnippetBase):
     id: int
     created_utc: datetime
+    created_by_user_id: Optional[int]
+    created_by_username: Optional[str]
 
 class CommentCreate(BaseModel):
     content: str
+
+class CommentUpdate(BaseModel):
+    content: Optional[str] = None
 
 class CommentVote(BaseModel):
     vote: conint(ge=-1, le=1)
@@ -65,7 +82,32 @@ class CommentOut(BaseModel):
 class UserOut(BaseModel):
     id: int
     username: str
+    role: str
     created_utc: datetime
+
+class ReportCreate(BaseModel):
+    reason: Optional[str] = None
+
+
+class ReportResolve(BaseModel):
+    resolution_note: Optional[str] = None
+
+
+class ReportOut(BaseModel):
+    id: int
+    content_type: str
+    content_id: int
+    reporter_id: int
+    reporter_username: Optional[str]
+    reason: Optional[str]
+    status: str
+    created_utc: datetime
+    resolved_utc: Optional[datetime]
+    resolved_by_user_id: Optional[int]
+    resolved_by_username: Optional[str]
+    resolution_note: Optional[str]
+    snippet: Optional[SnippetOut] = None
+    comment: Optional[CommentOut] = None
 
 
 class LoginRequest(BaseModel):
@@ -84,7 +126,7 @@ def create_access_token(*, subject: str, expires_delta: Optional[timedelta] = No
 
 def get_user_by_id(uid: int) -> Optional[UserOut]:
     with get_conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
-        cur.execute("SELECT id, username, created_utc FROM users WHERE id = %s", (uid,))
+        cur.execute("SELECT id, username, role, created_utc FROM users WHERE id = %s", (uid,))
         row = cur.fetchone()
     if not row:
         return None
@@ -94,7 +136,7 @@ def get_user_by_id(uid: int) -> Optional[UserOut]:
 def get_user_with_password(username: str):
     with get_conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
         cur.execute(
-            "SELECT id, username, password_hash, created_utc FROM users WHERE username = %s",
+             "SELECT id, username, password_hash, role, created_utc FROM users WHERE username = %s",
             (username,),
         )
         row = cur.fetchone()
@@ -117,6 +159,27 @@ def get_current_user(session_token: Optional[str] = Cookie(None, alias=SESSION_C
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     return user
+
+def is_moderator(user: UserOut) -> bool:
+    return user.role in {"moderator", "admin"}
+
+
+def fetch_snippet(snippet_id: int) -> Optional[SnippetOut]:
+    with get_conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+        cur.execute(
+            """
+            SELECT s.id, s.created_utc, s.date_read, s.book_name, s.page_number, s.chapter, s.verse,
+                   s.text_snippet, s.thoughts, s.created_by_user_id, u.username AS created_by_username
+            FROM snippets s
+            LEFT JOIN users u ON u.id = s.created_by_user_id
+            WHERE s.id = %s
+            """,
+            (snippet_id,),
+        )
+        row = cur.fetchone()
+    if not row:
+        return None
+    return SnippetOut(**dict(row))
 
 def fetch_comment(comment_id: int, user_id: int) -> Optional[CommentOut]:
     with get_conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
@@ -164,6 +227,70 @@ def list_comments_for_snippet(snippet_id: int, user_id: int) -> List[CommentOut]
         rows = cur.fetchall()
     return [CommentOut(**dict(r)) for r in rows]
 
+def build_report_from_row(row, viewer: UserOut) -> ReportOut:
+    data = dict(row)
+    snippet = None
+    comment = None
+    if data["content_type"] == "snippet":
+        snippet = fetch_snippet(data["content_id"])
+    elif data["content_type"] == "comment":
+        comment = fetch_comment(data["content_id"], viewer.id)
+    data["snippet"] = snippet
+    data["comment"] = comment
+    return ReportOut(**data)
+
+
+def fetch_report(report_id: int, viewer: UserOut) -> Optional[ReportOut]:
+    with get_conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+        cur.execute(
+            """
+            SELECT r.id, r.content_type, r.content_id, r.reporter_id, ru.username AS reporter_username,
+                   r.reason, r.status, r.created_utc, r.resolved_utc, r.resolved_by_user_id,
+                   rb.username AS resolved_by_username, r.resolution_note
+            FROM content_flags r
+            LEFT JOIN users ru ON ru.id = r.reporter_id
+            LEFT JOIN users rb ON rb.id = r.resolved_by_user_id
+            WHERE r.id = %s
+            """,
+            (report_id,),
+        )
+        row = cur.fetchone()
+    if not row:
+        return None
+    return build_report_from_row(row, viewer)
+
+
+def create_report_for_content(content_type: str, content_id: int, reporter: UserOut, reason: Optional[str]) -> ReportOut:
+    reason_text = (reason or "").strip()
+    reason_value = reason_text or None
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT 1 FROM content_flags
+            WHERE content_type = %s AND content_id = %s AND reporter_id = %s AND status = 'open'
+            """,
+            (content_type, content_id, reporter.id),
+        )
+        if cur.fetchone():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="You have already reported this item")
+
+        cur.execute(
+            """
+            INSERT INTO content_flags (content_type, content_id, reporter_id, reason)
+            VALUES (%s, %s, %s, %s)
+            RETURNING id
+            """,
+            (content_type, content_id, reporter.id, reason_value),
+        )
+        report_id = cur.fetchone()[0]
+        conn.commit()
+
+    report = fetch_report(report_id, reporter)
+    if report is None:
+        raise HTTPException(status_code=500, detail="Unable to load report")
+    return report
+
 app = FastAPI(title="Book Snippets API")
 
 # Vite proxy origin
@@ -193,7 +320,12 @@ def login(payload: LoginRequest, response: Response):
         path="/",
     )
 
-    return UserOut(id=user_row["id"], username=user_row["username"], created_utc=user_row["created_utc"])
+    return UserOut(
+        id=user_row["id"],
+        username=user_row["username"],
+        role=user_row["role"],
+        created_utc=user_row["created_utc"],
+    )
 
 
 @app.post("/api/auth/logout")
@@ -219,38 +351,94 @@ def healthz():
 @app.get("/api/snippets", response_model=List[SnippetOut])
 def list_snippets():
     with get_conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
-        cur.execute("""
-            SELECT id, created_utc, date_read, book_name, page_number, chapter, verse, text_snippet, thoughts, created_by
-            FROM snippets
-            ORDER BY id DESC
+        cur.execute(
+            """
+            SELECT s.id, s.created_utc, s.date_read, s.book_name, s.page_number, s.chapter, s.verse,
+                   s.text_snippet, s.thoughts, s.created_by_user_id, u.username AS created_by_username
+            FROM snippets s
+            LEFT JOIN users u ON u.id = s.created_by_user_id
+            ORDER BY s.id DESC
             LIMIT 100
-        """)
+            """
+        )
         rows = cur.fetchall()
     return [SnippetOut(**dict(r)) for r in rows]
 
 #test
 
 @app.post("/api/snippets", status_code=201)
-def create_snippet(payload: SnippetIn, current_user: UserOut = Depends(get_current_user)):
+def create_snippet(payload: SnippetCreate, current_user: UserOut = Depends(get_current_user)):
     with get_conn() as conn, conn.cursor() as cur:
-        cur.execute("""
-            INSERT INTO snippets (date_read, book_name, page_number, chapter, verse, text_snippet, thoughts, created_by)
+        cur.execute(
+            """
+            INSERT INTO snippets (date_read, book_name, page_number, chapter, verse, text_snippet, thoughts, created_by_user_id)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
-        """, (payload.date_read, payload.book_name, payload.page_number, payload.chapter,
-              payload.verse, payload.text_snippet, payload.thoughts, payload.created_by))
+        """,
+            (
+                payload.date_read,
+                payload.book_name,
+                payload.page_number,
+                payload.chapter,
+                payload.verse,
+                payload.text_snippet,
+                payload.thoughts,
+                current_user.id,
+            ),
+        )
         new_id = cur.fetchone()[0]
         conn.commit()
     return {"id": new_id}
 
+@app.patch("/api/snippets/{sid}", response_model=SnippetOut)
+def update_snippet(sid: int, payload: SnippetUpdate, current_user: UserOut = Depends(get_current_user)):
+    snippet = fetch_snippet(sid)
+    if snippet is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    if snippet.created_by_user_id != current_user.id and not is_moderator(current_user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to update this snippet")
+
+    updates = payload.dict(exclude_unset=True)
+    if not updates:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No changes provided")
+
+    set_clauses = []
+    values: List[object] = []
+    for field, value in updates.items():
+        set_clauses.append(f"{field} = %s")
+        values.append(value)
+    values.append(sid)
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(f"UPDATE snippets SET {', '.join(set_clauses)} WHERE id = %s", values)
+        conn.commit()
+
+    updated = fetch_snippet(sid)
+    if updated is None:
+        raise HTTPException(status_code=500, detail="Unable to load snippet")
+    return updated
+
+
+@app.delete("/api/snippets/{sid}", response_model=SnippetOut)
+def delete_snippet(sid: int, current_user: UserOut = Depends(get_current_user)):
+    snippet = fetch_snippet(sid)
+    if snippet is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    if snippet.created_by_user_id != current_user.id and not is_moderator(current_user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to delete this snippet")
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM snippets WHERE id = %s", (sid,))
+        conn.commit()
+
+    return snippet
+
 @app.get("/api/snippets/{sid}", response_model=SnippetOut)
 def get_snippet(sid: int, current_user: UserOut = Depends(get_current_user)):
-    with get_conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
-        cur.execute("SELECT * FROM snippets WHERE id=%s", (sid,))
-        row = cur.fetchone()
-    if not row:
+    snippet = fetch_snippet(sid)
+    if snippet is None:
         raise HTTPException(status_code=404, detail="Not found")
-    return SnippetOut(**dict(row))
+    return snippet
 
 # run: uvicorn main:app --host 127.0.0.1 --port 8000 --reload
 
@@ -289,6 +477,41 @@ def create_snippet_comment(sid: int, payload: CommentCreate, current_user: UserO
         raise HTTPException(status_code=500, detail="Unable to load comment")
     return comment
 
+@app.patch("/api/comments/{comment_id}", response_model=CommentOut)
+def update_comment(comment_id: int, payload: CommentUpdate, current_user: UserOut = Depends(get_current_user)):
+    existing = fetch_comment(comment_id, current_user.id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Comment not found")
+    if existing.user_id != current_user.id and not is_moderator(current_user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to update this comment")
+
+    content = (payload.content or "").strip() if payload.content is not None else None
+    if not content:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Content is required")
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("UPDATE comments SET content = %s WHERE id = %s", (content, comment_id))
+        conn.commit()
+
+    updated = fetch_comment(comment_id, current_user.id)
+    if updated is None:
+        raise HTTPException(status_code=500, detail="Unable to load comment")
+    return updated
+
+
+@app.delete("/api/comments/{comment_id}", response_model=CommentOut)
+def delete_comment(comment_id: int, current_user: UserOut = Depends(get_current_user)):
+    existing = fetch_comment(comment_id, current_user.id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Comment not found")
+    if existing.user_id != current_user.id and not is_moderator(current_user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to delete this comment")
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM comments WHERE id = %s", (comment_id,))
+        conn.commit()
+
+    return existing
 
 @app.post("/api/comments/{comment_id}/vote", response_model=CommentOut)
 def set_comment_vote(comment_id: int, payload: CommentVote, current_user: UserOut = Depends(get_current_user)):
@@ -320,3 +543,74 @@ def set_comment_vote(comment_id: int, payload: CommentVote, current_user: UserOu
     if comment is None:
         raise HTTPException(status_code=404, detail="Comment not found")
     return comment
+
+@app.post("/api/snippets/{sid}/report", response_model=ReportOut)
+def report_snippet(sid: int, payload: ReportCreate, current_user: UserOut = Depends(get_current_user)):
+    snippet = fetch_snippet(sid)
+    if snippet is None:
+        raise HTTPException(status_code=404, detail="Snippet not found")
+    return create_report_for_content("snippet", sid, current_user, payload.reason)
+
+
+@app.post("/api/comments/{comment_id}/report", response_model=ReportOut)
+def report_comment(comment_id: int, payload: ReportCreate, current_user: UserOut = Depends(get_current_user)):
+    comment = fetch_comment(comment_id, current_user.id)
+    if comment is None:
+        raise HTTPException(status_code=404, detail="Comment not found")
+    return create_report_for_content("comment", comment_id, current_user, payload.reason)
+
+
+@app.get("/api/moderation/reports", response_model=List[ReportOut])
+def list_reports(current_user: UserOut = Depends(get_current_user)):
+    if not is_moderator(current_user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
+
+    with get_conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+        cur.execute(
+            """
+            SELECT r.id, r.content_type, r.content_id, r.reporter_id, ru.username AS reporter_username,
+                   r.reason, r.status, r.created_utc, r.resolved_utc, r.resolved_by_user_id,
+                   rb.username AS resolved_by_username, r.resolution_note
+            FROM content_flags r
+            LEFT JOIN users ru ON ru.id = r.reporter_id
+            LEFT JOIN users rb ON rb.id = r.resolved_by_user_id
+            ORDER BY (r.status = 'open') DESC, r.created_utc DESC
+            """
+        )
+        rows = cur.fetchall()
+
+    return [build_report_from_row(row, current_user) for row in rows]
+
+
+@app.post("/api/moderation/reports/{report_id}/resolve", response_model=ReportOut)
+def resolve_report(report_id: int, payload: ReportResolve, current_user: UserOut = Depends(get_current_user)):
+    if not is_moderator(current_user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
+
+    resolution_note = (payload.resolution_note or "").strip() if payload.resolution_note is not None else None
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT status FROM content_flags WHERE id = %s FOR UPDATE", (report_id,))
+        row = cur.fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Report not found")
+        if row[0] == "resolved":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Report already resolved")
+
+        cur.execute(
+            """
+            UPDATE content_flags
+            SET status = 'resolved',
+                resolved_utc = NOW(),
+                resolved_by_user_id = %s,
+                resolution_note = %s
+            WHERE id = %s
+            """,
+            (current_user.id, resolution_note or None, report_id),
+        )
+        conn.commit()
+
+    report = fetch_report(report_id, current_user)
+    if report is None:
+        raise HTTPException(status_code=500, detail="Unable to load report")
+    return report

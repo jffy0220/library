@@ -13,13 +13,26 @@ DB_CFG = dict(
 def main():
     username = input("New username: ").strip()
     password = input("New password: ").strip()
+    role = (input("Role [user/moderator/admin] (default user): ") or "user").strip().lower() or "user"
+    if role not in {"user", "moderator", "admin"}:
+        print("Invalid role; defaulting to 'user'.")
+        role = "user"
+
     pw_hash = generate_password_hash(password)  # PBKDF2-SHA256 by default
 
     with psycopg2.connect(**DB_CFG) as conn, conn.cursor() as cur:
-        cur.execute("INSERT INTO users (username, password_hash) VALUES (%s, %s) ON CONFLICT DO NOTHING",
-                    (username, pw_hash))
+        cur.execute(
+            """
+            INSERT INTO users (username, password_hash, role)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (username) DO UPDATE
+                SET password_hash = EXCLUDED.password_hash,
+                    role = EXCLUDED.role
+            """,
+            (username, pw_hash, role),
+        )
         conn.commit()
-    print("Done. (If username existed already, it was left unchanged.)")
+    print("Done. Existing users are updated with the provided password and role.")
 
 if __name__ == "__main__":
     main()
