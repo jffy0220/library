@@ -8,7 +8,7 @@ from fastapi import FastAPI, HTTPException, Depends, Response, Cookie, status, Q
 from fastapi.middleware.cors import CORSMiddleware
 import psycopg2
 import psycopg2.extras
-from pydantic import BaseModel, conint
+from pydantic import BaseModel, conint, Field
 from dotenv import load_dotenv
 from jose import JWTError, jwt
 from passlib.hash import bcrypt
@@ -62,13 +62,14 @@ class SnippetUpdate(BaseModel):
     verse: Optional[str] = None
     text_snippet: Optional[str] = None
     thoughts: Optional[str] = None
+    tags: Optional[List[str]] = None
 
 class SnippetOut(SnippetBase):
     id: int
     created_utc: datetime
     created_by_user_id: Optional[int]
     created_by_username: Optional[str]
-    tags: List[TagOut] = []
+    tags: List[TagOut] = Field(default_factory=list)
 
 
 class SnippetWithStats(SnippetOut):
@@ -287,21 +288,25 @@ def is_moderator(user: UserOut) -> bool:
 
 
 def fetch_snippet(snippet_id: int) -> Optional[SnippetOut]:
-    with get_conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
-        cur.execute(
-            """
-            SELECT s.id, s.created_utc, s.date_read, s.book_name, s.page_number, s.chapter, s.verse,
-                   s.text_snippet, s.thoughts, s.created_by_user_id, u.username AS created_by_username
-            FROM snippets s
-            LEFT JOIN users u ON u.id = s.created_by_user_id
-            WHERE s.id = %s
-            """,
-            (snippet_id,),
-        )
-        row = cur.fetchone()
-    if not row:
-        return None
-    return SnippetOut(**dict(row))
+    with get_conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            cur.execute(
+                """
+                SELECT s.id, s.created_utc, s.date_read, s.book_name, s.page_number, s.chapter, s.verse,
+                       s.text_snippet, s.thoughts, s.created_by_user_id, u.username AS created_by_username
+                FROM snippets s
+                LEFT JOIN users u ON u.id = s.created_by_user_id
+                WHERE s.id = %s
+                """,
+                (snippet_id,),
+            )
+            row = cur.fetchone()
+        if not row:
+            return None
+        snippet = SnippetOut(**dict(row))
+        tag_map = fetch_tags_for_snippets(conn, [snippet.id])
+        snippet.tags = tag_map.get(snippet.id, [])
+    return snippet
 
 def fetch_comment(comment_id: int, user_id: int) -> Optional[CommentOut]:
     with get_conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
@@ -471,43 +476,212 @@ def healthz():
     return {"ok": True}
 
 @app.get("/api/snippets", response_model=List[SnippetOut])
-def list_snippets():
+def list_snippets(
+    q: Optional[str] = Query(None, description="Full-text search query"),
+    tags_csv: Optional[str] = Query(None, alias="tags", description="Comma separated list of tags"),
+    tags_multi: Optional[List[str]] = Query(None, alias="tag", description="Repeatable tag filters"),
+    sort: str = Query("recent", description="Sort order: recent, trending, or relevance"),
+    limit: int = Query(50, ge=1, le=200),
+):
+    sort_key = sort.lower().strip()
+    allowed_sorts = {"recent", "trending", "relevance"}
+    if sort_key not in allowed_sorts:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid sort option")
+
+    search_term = (q or "").strip()
+    if not search_term:
+        search_term = None
+
+    raw_tags: List[str] = []
+    if tags_csv:
+        raw_tags.extend(part for part in tags_csv.split(",") if part.strip())
+    if tags_multi:
+        raw_tags.extend(tags_multi)
+    normalized_tags = normalize_tag_inputs(raw_tags)
+    tag_slugs = [slug for _, slug in normalized_tags]
+
+    ts_vector = "to_tsvector('english', coalesce(s.text_snippet,'') || ' ' || coalesce(s.thoughts,''))"
+
+    with get_conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            select_fields = [
+                "s.id",
+                "s.created_utc",
+                "s.date_read",
+                "s.book_name",
+                "s.page_number",
+                "s.chapter",
+                "s.verse",
+                "s.text_snippet",
+                "s.thoughts",
+                "s.created_by_user_id",
+                "u.username AS created_by_username",
+            ]
+            joins = ["LEFT JOIN users u ON u.id = s.created_by_user_id"]
+            where_clauses: List[str] = []
+            params: List[object] = []
+
+            if search_term:
+                select_fields.append(
+                    f"ts_rank_cd({ts_vector}, plainto_tsquery('english', %s)) AS search_rank"
+                )
+                params.append(search_term)
+                where_clauses.append(
+                    f"{ts_vector} @@ plainto_tsquery('english', %s)"
+                )
+                params.append(search_term)
+
+            if tag_slugs:
+                where_clauses.append(
+                    "s.id IN ("
+                    "SELECT st.snippet_id FROM snippet_tags st "
+                    "JOIN tags t ON t.id = st.tag_id "
+                    "GROUP BY st.snippet_id "
+                    "HAVING COUNT(DISTINCT CASE WHEN t.slug = ANY(%s) THEN t.slug END) = %s"
+                    ")"
+                )
+                params.append(tag_slugs)
+                params.append(len(tag_slugs))
+
+            order_clause = "s.created_utc DESC"
+            if sort_key == "trending":
+                select_fields.extend(
+                    [
+                        "COALESCE(tsa.recent_comment_count, 0) AS recent_comment_count",
+                        "COALESCE(tsa.tag_count, 0) AS tag_count",
+                        "COALESCE(tsa.lexeme_count, 0) AS lexeme_count",
+                    ]
+                )
+                joins.append("LEFT JOIN trending_snippet_activity tsa ON tsa.snippet_id = s.id")
+                order_clause = (
+                    "COALESCE(tsa.recent_comment_count, 0) DESC, "
+                    "COALESCE(tsa.tag_count, 0) DESC, "
+                    "COALESCE(tsa.lexeme_count, 0) DESC, "
+                    "s.created_utc DESC"
+                )
+            elif search_term:
+                order_clause = "search_rank DESC, s.created_utc DESC"
+
+            where_sql = ""
+            if where_clauses:
+                where_sql = " WHERE " + " AND ".join(where_clauses)
+
+            query = (
+                "SELECT "
+                + ", ".join(select_fields)
+                + " FROM snippets s "
+                + " ".join(joins)
+                + where_sql
+                + f" ORDER BY {order_clause} LIMIT %s"
+            )
+            params.append(limit)
+            cur.execute(query, params)
+            rows = cur.fetchall()
+
+        snippets = [SnippetOut(**dict(row)) for row in rows]
+        tag_map = fetch_tags_for_snippets(conn, [snippet.id for snippet in snippets])
+        for snippet in snippets:
+            snippet.tags = tag_map.get(snippet.id, [])
+    return snippets
+
+
+@app.get("/api/snippets/trending", response_model=List[SnippetWithStats])
+def list_trending_snippets(limit: int = Query(6, ge=1, le=50)):
+    with get_conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            cur.execute(
+                """
+                SELECT s.id, s.created_utc, s.date_read, s.book_name, s.page_number, s.chapter, s.verse,
+                       s.text_snippet, s.thoughts, s.created_by_user_id, u.username AS created_by_username,
+                       COALESCE(tsa.recent_comment_count, 0) AS recent_comment_count,
+                       COALESCE(tsa.tag_count, 0) AS tag_count,
+                       COALESCE(tsa.lexeme_count, 0) AS lexeme_count
+                FROM trending_snippet_activity tsa
+                JOIN snippets s ON s.id = tsa.snippet_id
+                LEFT JOIN users u ON u.id = s.created_by_user_id
+                ORDER BY tsa.recent_comment_count DESC, tsa.tag_count DESC, tsa.lexeme_count DESC, s.created_utc DESC
+                LIMIT %s
+                """,
+                (limit,),
+            )
+            rows = cur.fetchall()
+
+        snippets = [SnippetWithStats(**dict(row)) for row in rows]
+        tag_map = fetch_tags_for_snippets(conn, [snippet.id for snippet in snippets])
+        for snippet in snippets:
+            snippet.tags = tag_map.get(snippet.id, [])
+    return snippets
+
+@app.get("/api/tags", response_model=List[TagSummary])
+def list_tags(limit: int = Query(100, ge=1, le=500)):
     with get_conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
         cur.execute(
             """
-            SELECT s.id, s.created_utc, s.date_read, s.book_name, s.page_number, s.chapter, s.verse,
-                   s.text_snippet, s.thoughts, s.created_by_user_id, u.username AS created_by_username
-            FROM snippets s
-            LEFT JOIN users u ON u.id = s.created_by_user_id
-            ORDER BY s.id DESC
-            LIMIT 100
-            """
+            SELECT t.id, t.name, t.slug, COUNT(DISTINCT st.snippet_id) AS usage_count
+            FROM tags t
+            LEFT JOIN snippet_tags st ON st.tag_id = t.id
+            GROUP BY t.id, t.name, t.slug
+            ORDER BY LOWER(t.name)
+            LIMIT %s
+            """,
+            (limit,),
         )
         rows = cur.fetchall()
-    return [SnippetOut(**dict(r)) for r in rows]
+    return [TagSummary(**dict(row)) for row in rows]
+
+
+@app.get("/api/tags/popular", response_model=List[TagSummary])
+def list_popular_tags(
+    limit: int = Query(12, ge=1, le=200),
+    days: int = Query(7, ge=1, le=365),
+):
+    with get_conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+        cur.execute(
+            """
+            SELECT t.id, t.name, t.slug, COUNT(DISTINCT st.snippet_id) AS usage_count
+            FROM tags t
+            JOIN snippet_tags st ON st.tag_id = t.id
+            JOIN snippets s ON s.id = st.snippet_id
+            WHERE s.created_utc >= NOW() - (%s * INTERVAL '1 day')
+            GROUP BY t.id, t.name, t.slug
+            ORDER BY usage_count DESC, LOWER(t.name)
+            LIMIT %s
+            """,
+            (days, limit),
+        )
+        rows = cur.fetchall()
+    return [TagSummary(**dict(row)) for row in rows]
+
 
 @app.post("/api/snippets", status_code=201)
 def create_snippet(payload: SnippetCreate, current_user: UserOut = Depends(get_current_user)):
-    with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO snippets (date_read, book_name, page_number, chapter, verse, text_snippet, thoughts, created_by_user_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING id
-        """,
-            (
-                payload.date_read,
-                payload.book_name,
-                payload.page_number,
-                payload.chapter,
-                payload.verse,
-                payload.text_snippet,
-                payload.thoughts,
-                current_user.id,
-            ),
-        )
-        new_id = cur.fetchone()[0]
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO snippets (date_read, book_name, page_number, chapter, verse, text_snippet, thoughts, created_by_user_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+            """,
+                (
+                    payload.date_read,
+                    payload.book_name,
+                    payload.page_number,
+                    payload.chapter,
+                    payload.verse,
+                    payload.text_snippet,
+                    payload.thoughts,
+                    current_user.id,
+                ),
+            )
+            new_id = cur.fetchone()[0]
+
+        tags = upsert_tags(conn, payload.tags)
+        if tags:
+            link_tags_to_snippet(conn, new_id, tags)
         conn.commit()
+
+    refresh_trending_view()
     return {"id": new_id}
 
 @app.patch("/api/snippets/{sid}", response_model=SnippetOut)
@@ -519,7 +693,8 @@ def update_snippet(sid: int, payload: SnippetUpdate, current_user: UserOut = Dep
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to update this snippet")
 
     updates = payload.dict(exclude_unset=True)
-    if not updates:
+    tag_updates = updates.pop("tags", None)
+    if not updates and tag_updates is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No changes provided")
 
     set_clauses = []
@@ -529,9 +704,25 @@ def update_snippet(sid: int, payload: SnippetUpdate, current_user: UserOut = Dep
         values.append(value)
     values.append(sid)
 
-    with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(f"UPDATE snippets SET {', '.join(set_clauses)} WHERE id = %s", values)
+    with get_conn() as conn:
+        if set_clauses:
+            update_values = values + [sid]
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"UPDATE snippets SET {', '.join(set_clauses)} WHERE id = %s",
+                    update_values,
+                )
+
+        if tag_updates is not None:
+            new_tags = upsert_tags(conn, tag_updates)
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM snippet_tags WHERE snippet_id = %s", (sid,))
+            if new_tags:
+                link_tags_to_snippet(conn, sid, new_tags)
+
         conn.commit()
+
+    refresh_trending_view()
 
     updated = fetch_snippet(sid)
     if updated is None:
@@ -551,6 +742,7 @@ def delete_snippet(sid: int, current_user: UserOut = Depends(get_current_user)):
         cur.execute("DELETE FROM snippets WHERE id = %s", (sid,))
         conn.commit()
 
+    refresh_trending_view()
     return snippet
 
 @app.get("/api/snippets/{sid}", response_model=SnippetOut)
@@ -591,6 +783,8 @@ def create_snippet_comment(sid: int, payload: CommentCreate, current_user: UserO
         )
         comment_id = cur.fetchone()[0]
         conn.commit()
+
+    refresh_trending_view()
 
     comment = fetch_comment(comment_id, current_user.id)
     if comment is None:

@@ -82,7 +82,13 @@ export default function List() {
         if (!ignore) setRows(data)
       } catch (err) {
         if (!ignore && err?.response?.status !== 401) {
+          if (err?.response?.status === 401) {
+            return
+          }
           console.error('Failed to load snippets', err)
+          const detail = err?.response?.data?.detail
+          setError(detail || 'Failed to load snippets.')
+          setRows([])
         }
       } finally {
         if (!ignore) setLoading(false)
@@ -194,8 +200,8 @@ export default function List() {
                           <Link to={`/snippet/${r.id}`}>{r.book_name || 'Untitled'}</Link>
                         </h6>
                         <div className="text-muted small">
-                          {r.created_by ? <>by {r.created_by}</> : null}
-                          {r.created_by && (r.page_number != null || r.chapter || r.verse) ? ' · ' : ''}
+                          {r.created_by_username ? <>by {r.created_by_username}</> : null}
+                          {r.created_by_username && (r.page_number != null || r.chapter || r.verse) ? ' · ' : ''}
                           {r.page_number != null ? <>p. {r.page_number}</> : null}
                           {r.chapter ? <>{r.page_number != null ? ' · ' : ''}ch. {r.chapter}</> : null}
                           {r.verse ? <>{(r.page_number != null || r.chapter) ? ' · ' : ''}v. {r.verse}</> : null}

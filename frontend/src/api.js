@@ -18,19 +18,38 @@ api.interceptors.response.use(
   }
 )
 
-export async function listSnippets() {
-  const query = {}
-  if (params.q) query.q = params.q
-  if (params.tags && params.tags.length) query.tags = params.tags.join(',')
-  if (params.sort) query.sort = params.sort
-  if (params.limit) query.limit = params.limit
-  const { data } = await api.get('/snippets', { params: query })
+export async function listSnippets(params = {}) {
+  const query = new URLSearchParams()
+  if (params.q) {
+    query.set('q', params.q)
+  }
+  if (Array.isArray(params.tags)) {
+    params.tags
+      .map((tag) => (tag || '').trim())
+      .filter(Boolean)
+      .forEach((tag) => {
+        query.append('tag', tag)
+      })
+  }
+  if (params.sort) {
+    query.set('sort', params.sort)
+  }
+  if (params.limit) {
+    query.set('limit', params.limit)
+  }
+  const config = {}
+  if ([...query.keys()].length > 0) {
+    config.params = query
+  }
+  const { data } = await api.get('/snippets', config)
   return data
 }
+
 export async function createSnippet(payload) {
   const { data } = await api.post('/snippets', payload)
   return data
 }
+
 export async function getSnippet(id) {
   const { data } = await api.get(`/snippets/${id}`)
   return data
