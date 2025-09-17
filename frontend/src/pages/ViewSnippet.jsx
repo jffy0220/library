@@ -532,6 +532,22 @@ export default function ViewSnippet() {
               <label className="form-label">Thoughts</label>
               <textarea className="form-control" rows="6" value={row.thoughts || ''} readOnly />
             </div>
+            {row.tags && row.tags.length ? (
+            <div className="col-12">
+              <label className="form-label">Tags</label>
+              <div className="d-flex flex-wrap gap-2">
+                {row.tags.map((tag) => (
+                  <Link
+                    key={tag.id}
+                    className="badge bg-secondary text-decoration-none"
+                    to={`/?tag=${encodeURIComponent(tag.name)}`}
+                  >
+                    #{tag.name}
+                  </Link>
+                ))}
+              </div>
+            </div>
+            ) : null}
           </div>
         )}
 

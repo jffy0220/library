@@ -1,7 +1,8 @@
-import React, { useState } from 'react'
-import { createSnippet } from '../api'
+import React, { useState, useEffect } from 'react'
+import { createSnippet, listTags } from '../api'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth'
+import TagSelector from '../components/TagSelector'
 
 export default function NewSnippet() {
   const nav = useNavigate()
@@ -17,11 +18,31 @@ export default function NewSnippet() {
   })
 
   const [msg, setMsg] = useState('')
+  const [tags, setTags] = useState([])
+  const [availableTags, setAvailableTags] = useState([])
+  const [loadingTags, setLoadingTags] = useState(true)
 
   const onChange = (e) => {
     const { name, value } = e.target
     setForm(f => ({ ...f, [name]: value }))
   }
+
+  useEffect(() => {
+    let ignore = false
+    ;(async () => {
+      try {
+        const data = await listTags({ limit: 200 })
+        if (!ignore) setAvailableTags(data)
+      } catch (err) {
+        if (!ignore) {
+          console.error('Failed to load tag suggestions', err)
+        }
+      } finally {
+        if (!ignore) setLoadingTags(false)
+      }
+    })()
+    return () => { ignore = true }
+  }, [])
 
   const onSubmit = async (e) => {
     e.preventDefault()
@@ -33,6 +54,7 @@ export default function NewSnippet() {
       verse: form.verse || null,
       text_snippet: form.text_snippet || null,
       thoughts: form.thoughts || null,
+      tags,
     }
     try {
       await createSnippet(payload)
@@ -81,6 +103,20 @@ export default function NewSnippet() {
             <div className="col-12">
               <label className="form-label">Thoughts</label>
               <textarea name="thoughts" rows="4" className="form-control" value={form.thoughts} onChange={onChange}/>
+            </div>
+            <div className="col-12">
+              <label className="form-label">Tags</label>
+              <TagSelector
+                availableTags={availableTags}
+                value={tags}
+                onChange={setTags}
+                allowCustom
+                placeholder="Add a tag and press Add"
+                showCounts
+              />
+              <div className="form-text">
+                {loadingTags ? 'Loading tag suggestions…' : 'Select existing tags or add your own to help readers find this snippet.'}
+              </div>
             </div>
           </div>
           <div className="mt-3">

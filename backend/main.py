@@ -1,8 +1,10 @@
 import os
+import re
+from collections import defaultdict
 from datetime import datetime, date, timedelta
-from typing import Optional, List
+from typing import Optional, List, Dict, Tuple
 
-from fastapi import FastAPI, HTTPException, Depends, Response, Cookie, status
+from fastapi import FastAPI, HTTPException, Depends, Response, Cookie, status, Query
 from fastapi.middleware.cors import CORSMiddleware
 import psycopg2
 import psycopg2.extras
@@ -38,10 +40,19 @@ class SnippetBase(BaseModel):
     verse: Optional[str] = None
     text_snippet: Optional[str] = None
     thoughts: Optional[str] = None
+    tags: Optional[List[str]] = None
+
+class TagOut(BaseModel):
+    id: int
+    name: str
+    slug: str
+
+
+class TagSummary(TagOut):
+    usage_count: int
 
 class SnippetCreate(SnippetBase):
     pass
-
 
 class SnippetUpdate(BaseModel):
     date_read: Optional[date] = None
@@ -57,6 +68,117 @@ class SnippetOut(SnippetBase):
     created_utc: datetime
     created_by_user_id: Optional[int]
     created_by_username: Optional[str]
+    tags: List[TagOut] = []
+
+
+class SnippetWithStats(SnippetOut):
+    recent_comment_count: int = 0
+    tag_count: int = 0
+    lexeme_count: int = 0
+
+TAG_SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+
+def slugify_tag(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    slug = TAG_SLUG_RE.sub("-", value.strip().lower())
+    slug = slug.strip("-")
+    return slug or None
+
+
+def normalize_tag_inputs(raw_tags: Optional[List[str]]) -> List[Tuple[str, str]]:
+    normalized: List[Tuple[str, str]] = []
+    seen: set[str] = set()
+    if not raw_tags:
+        return normalized
+    for raw in raw_tags:
+        if raw is None:
+            continue
+        name = raw.strip()
+        if not name:
+            continue
+        slug = slugify_tag(name)
+        if not slug or slug in seen:
+            continue
+        seen.add(slug)
+        normalized.append((name, slug))
+    return normalized
+
+
+def upsert_tags(conn, raw_tags: Optional[List[str]]) -> List[TagOut]:
+    normalized = normalize_tag_inputs(raw_tags)
+    if not normalized:
+        return []
+    tags: List[TagOut] = []
+    with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+        for name, slug in normalized:
+            cur.execute(
+                """
+                INSERT INTO tags (name, slug)
+                VALUES (%s, %s)
+                ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name
+                RETURNING id, name, slug
+                """,
+                (name, slug),
+            )
+            row = cur.fetchone()
+            if row:
+                tags.append(TagOut(**dict(row)))
+    return tags
+
+
+def fetch_tags_for_snippets(conn, snippet_ids: List[int]) -> Dict[int, List[TagOut]]:
+    if not snippet_ids:
+        return {}
+    with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+        cur.execute(
+            """
+            SELECT st.snippet_id, t.id, t.name, t.slug
+            FROM snippet_tags st
+            JOIN tags t ON t.id = st.tag_id
+            WHERE st.snippet_id = ANY(%s)
+            ORDER BY LOWER(t.name)
+            """,
+            (snippet_ids,),
+        )
+        mapping: Dict[int, List[TagOut]] = defaultdict(list)
+        for row in cur.fetchall():
+            mapping[row["snippet_id"]].append(
+                TagOut(id=row["id"], name=row["name"], slug=row["slug"])
+            )
+    return mapping
+
+
+def link_tags_to_snippet(conn, snippet_id: int, tags: List[TagOut]) -> None:
+    if not tags:
+        return
+    values = [(snippet_id, tag.id) for tag in tags]
+    with conn.cursor() as cur:
+        psycopg2.extras.execute_values(
+            cur,
+            """
+            INSERT INTO snippet_tags (snippet_id, tag_id)
+            VALUES %s
+            ON CONFLICT (snippet_id, tag_id) DO NOTHING
+            """,
+            values,
+        )
+
+
+def refresh_trending_view() -> None:
+    try:
+        conn = psycopg2.connect(**DB_CFG)
+    except psycopg2.Error:
+        return
+    try:
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            cur.execute("REFRESH MATERIALIZED VIEW trending_snippet_activity")
+    except psycopg2.Error:
+        pass
+    finally:
+        conn.close()
 
 class CommentCreate(BaseModel):
     content: str
@@ -363,8 +485,6 @@ def list_snippets():
         )
         rows = cur.fetchall()
     return [SnippetOut(**dict(r)) for r in rows]
-
-#test
 
 @app.post("/api/snippets", status_code=201)
 def create_snippet(payload: SnippetCreate, current_user: UserOut = Depends(get_current_user)):

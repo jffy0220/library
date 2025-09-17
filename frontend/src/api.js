@@ -19,7 +19,12 @@ api.interceptors.response.use(
 )
 
 export async function listSnippets() {
-  const { data } = await api.get('/snippets')
+  const query = {}
+  if (params.q) query.q = params.q
+  if (params.tags && params.tags.length) query.tags = params.tags.join(',')
+  if (params.sort) query.sort = params.sort
+  if (params.limit) query.limit = params.limit
+  const { data } = await api.get('/snippets', { params: query })
   return data
 }
 export async function createSnippet(payload) {
@@ -33,6 +38,28 @@ export async function getSnippet(id) {
 
 export async function updateSnippet(id, payload) {
   const { data } = await api.patch(`/snippets/${id}`, payload)
+  return data
+}
+
+export async function getTrendingSnippets(params = {}) {
+  const query = {}
+  if (params.limit) query.limit = params.limit
+  const { data } = await api.get('/snippets/trending', { params: query })
+  return data
+}
+
+export async function listTags(params = {}) {
+  const query = {}
+  if (params.limit) query.limit = params.limit
+  const { data } = await api.get('/tags', { params: query })
+  return data
+}
+
+export async function listPopularTags(params = {}) {
+  const query = {}
+  if (params.limit) query.limit = params.limit
+  if (params.days) query.days = params.days
+  const { data } = await api.get('/tags/popular', { params: query })
   return data
 }
 
