@@ -1,9 +1,11 @@
 import React, { useState } from 'react'
 import { createSnippet } from '../api'
 import { useNavigate } from 'react-router-dom'
+import { useAuth } from '../auth'
 
 export default function NewSnippet() {
   const nav = useNavigate()
+  const { user } = useAuth()
   const [form, setForm] = useState({
     date_read: '',
     book_name: '',
