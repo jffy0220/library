@@ -11,8 +11,10 @@ import {
   deleteComment,
   reportSnippet,
   reportComment,
+  listTags,
 } from '../api'
 import { useAuth } from '../auth'
+import TagSelector from '../components/TagSelector'
 
 const makeEmptySnippetForm = () => ({
   date_read: '',
@@ -43,6 +45,9 @@ export default function ViewSnippet() {
   const [snippetForm, setSnippetForm] = useState(makeEmptySnippetForm)
   const [snippetSaving, setSnippetSaving] = useState(false)
   const [deletingSnippet, setDeletingSnippet] = useState(false)
+  const [snippetTags, setSnippetTags] = useState([])
+  const [availableTags, setAvailableTags] = useState([])
+  const [tagsLoading, setTagsLoading] = useState(true)
 
   const [showSnippetReport, setShowSnippetReport] = useState(false)
   const [snippetReportReason, setSnippetReportReason] = useState('')
@@ -105,8 +110,32 @@ export default function ViewSnippet() {
     }
   }, [id])
 
+  useEffect(() => {
+    let ignore = false
+    setTagsLoading(true)
+    ;(async () => {
+      try {
+        const data = await listTags({ limit: 200 })
+        if (!ignore) setAvailableTags(data)
+      } catch (err) {
+        if (!ignore) {
+          console.error('Failed to load tag suggestions', err)
+        }
+      } finally {
+        if (!ignore) setTagsLoading(false)
+      }
+    })()
+    return () => {
+      ignore = true
+    }
+  }, [])
+
   const handleCommentSubmit = async (event) => {
     event.preventDefault()
+    if (!user) {
+      setCommentAlert({ type: 'info', message: 'Please sign in to share a comment.' })
+      return
+    }
     const trimmed = commentContent.trim()
     if (!trimmed) {
       setCommentError('Please enter a comment before submitting.')
@@ -130,6 +159,10 @@ export default function ViewSnippet() {
   }
 
   const handleVote = async (commentId, nextVote) => {
+    if (!user) {
+      setCommentAlert({ type: 'info', message: 'Sign in to vote on comments.' })
+      return
+    }
     setVoting((prev) => ({ ...prev, [commentId]: true }))
     try {
       const updated = await voteComment(commentId, { vote: nextVote })
@@ -160,6 +193,7 @@ export default function ViewSnippet() {
       text_snippet: row.text_snippet || '',
       thoughts: row.thoughts || '',
     })
+    setSnippetTags((row.tags || []).map((tag) => tag.name))
     setEditingSnippet(true)
   }
 
@@ -172,6 +206,7 @@ export default function ViewSnippet() {
     setEditingSnippet(false)
     setSnippetForm(makeEmptySnippetForm())
     setSnippetSaving(false)
+    setSnippetTags([])
   }
 
   const handleSnippetEditSubmit = async (event) => {
@@ -198,6 +233,7 @@ export default function ViewSnippet() {
       verse: snippetForm.verse || null,
       text_snippet: snippetForm.text_snippet || null,
       thoughts: snippetForm.thoughts || null,
+      tags: snippetTags,
     }
 
     setSnippetSaving(true)
@@ -207,6 +243,7 @@ export default function ViewSnippet() {
       setSnippetAlert({ type: 'success', message: 'Snippet updated.' })
       setEditingSnippet(false)
       setSnippetForm(makeEmptySnippetForm())
+      setSnippetTags([])
     } catch (err) {
       const detail = err?.response?.data?.detail
       setSnippetAlert({ type: 'danger', message: detail || 'Failed to update snippet.' })
@@ -484,6 +521,22 @@ export default function ViewSnippet() {
                 />
               </div>
             </div>
+            <div className="col-12">
+                <label className="form-label">Tags</label>
+                <TagSelector
+                  availableTags={availableTags}
+                  value={snippetTags}
+                  onChange={setSnippetTags}
+                  allowCustom
+                  placeholder="Add a tag and press Add"
+                  showCounts
+                />
+                <div className="form-text">
+                  {tagsLoading
+                    ? 'Loading tag suggestions…'
+                    : 'Select existing tags or add new ones to help readers find this snippet.'}
+                </div>
+              </div>
             <div className="mt-3 d-flex gap-2">
               <button className="btn btn-primary" type="submit" disabled={snippetSaving}>
                 {snippetSaving ? 'Saving…' : 'Save changes'}
@@ -533,20 +586,20 @@ export default function ViewSnippet() {
               <textarea className="form-control" rows="6" value={row.thoughts || ''} readOnly />
             </div>
             {row.tags && row.tags.length ? (
-            <div className="col-12">
-              <label className="form-label">Tags</label>
-              <div className="d-flex flex-wrap gap-2">
-                {row.tags.map((tag) => (
-                  <Link
-                    key={tag.id}
-                    className="badge bg-secondary text-decoration-none"
-                    to={`/?tag=${encodeURIComponent(tag.name)}`}
-                  >
-                    #{tag.name}
-                  </Link>
-                ))}
+             <div className="col-12">
+                <label className="form-label">Tags</label>
+                <div className="d-flex flex-wrap gap-2">
+                  {row.tags.map((tag) => (
+                    <Link
+                      key={tag.id}
+                      className="badge bg-secondary text-decoration-none"
+                      to={`/?tag=${encodeURIComponent(tag.name)}`}
+                    >
+                      #{tag.name}
+                    </Link>
+                  ))}
+                </div>
               </div>
-            </div>
             ) : null}
           </div>
         )}
@@ -578,33 +631,43 @@ export default function ViewSnippet() {
               {commentAlert.message}
             </div>
           )}
-          <form onSubmit={handleCommentSubmit} className="mb-4">
-            <div className="mb-3">
-              <label className="form-label" htmlFor="new-comment">
-                Leave a comment
-              </label>
-              <textarea
-                id="new-comment"
-                className="form-control"
-                rows="4"
-                value={commentContent}
-                onChange={(event) => {
-                  if (commentError) setCommentError(null)
-                  setCommentContent(event.target.value)
-                }}
-                disabled={submittingComment}
-                placeholder="Share your thoughts…"
-              />
+         {!user ? (
+            <div className="alert alert-info mb-4">
+              Enjoying the discussion?{' '}
+              <Link to="/login" className="alert-link">
+                Sign in
+              </Link>{' '}
+              to add your thoughts and react to comments.
             </div>
-            {commentError && <div className="text-danger mb-3">{commentError}</div>}
-            <button
-              type="submit"
-              className="btn btn-primary"
-              disabled={submittingComment || !commentContent.trim()}
-            >
-              {submittingComment ? 'Posting…' : 'Post Comment'}
-            </button>
-          </form>
+          ) : (
+            <form onSubmit={handleCommentSubmit} className="mb-4">
+              <div className="mb-3">
+                <label className="form-label" htmlFor="new-comment">
+                  Leave a comment
+                </label>
+                <textarea
+                  id="new-comment"
+                  className="form-control"
+                  rows="4"
+                  value={commentContent}
+                  onChange={(event) => {
+                    if (commentError) setCommentError(null)
+                    setCommentContent(event.target.value)
+                  }}
+                  disabled={submittingComment}
+                  placeholder="Share your thoughts…"
+                />
+              </div>
+              {commentError && <div className="text-danger mb-3">{commentError}</div>}
+              <button
+                type="submit"
+                className="btn btn-primary"
+                disabled={submittingComment || !commentContent.trim()}
+              >
+                {submittingComment ? 'Posting…' : 'Post Comment'}
+              </button>
+            </form>
+          )}
           {commentsLoading ? (
             <div>Loading comments…</div>
           ) : comments.length === 0 ? (
@@ -625,7 +688,7 @@ export default function ViewSnippet() {
                         type="button"
                         className={`btn btn-sm w-100 ${comment.user_vote === 1 ? 'btn-primary' : 'btn-outline-secondary'}`}
                         onClick={() => handleVote(comment.id, comment.user_vote === 1 ? 0 : 1)}
-                        disabled={isVoting}
+                        disabled={!user || isVoting}
                         aria-label="Upvote"
                       >
                         ▲
@@ -635,7 +698,7 @@ export default function ViewSnippet() {
                         type="button"
                         className={`btn btn-sm w-100 ${comment.user_vote === -1 ? 'btn-primary' : 'btn-outline-secondary'}`}
                         onClick={() => handleVote(comment.id, comment.user_vote === -1 ? 0 : -1)}
-                        disabled={isVoting}
+                        disabled={!user || isVoting}
                         aria-label="Downvote"
                       >
                         ▼

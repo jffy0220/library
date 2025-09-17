@@ -24,7 +24,15 @@ SELECT
     s.id AS snippet_id,
     COUNT(DISTINCT c.id) FILTER (WHERE c.created_utc >= NOW() - INTERVAL '7 days') AS recent_comment_count,
     COUNT(DISTINCT st.tag_id) AS tag_count,
-    numnode(to_tsvector('english', COALESCE(s.text_snippet, '') || ' ' || COALESCE(s.thoughts, ''))) AS lexeme_count,
+    COALESCE(
+      array_length(
+        tsvector_to_array(
+          to_tsvector('english', COALESCE(s.text_snippet, '') || ' ' || COALESCE(s.thoughts, ''))
+        ),
+        1
+      ),
+      0
+    ) AS lexeme_count,
     MAX(s.created_utc) AS snippet_created_utc
 FROM snippets s
 LEFT JOIN comments c ON c.snippet_id = s.id

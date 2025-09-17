@@ -44,7 +44,7 @@ function RequireNoAuth() {
   return <Outlet />
 }
 
-function AuthenticatedLayout() {
+function AppLayout() {
   return (
     <>
       <Navbar />
@@ -59,11 +59,13 @@ export default function App() {
   return (
     <AuthProvider>
       <Routes>
-        <Route element={<RequireAuth />}>
+        <Route element={<AppLayout />}>
           <Route element={<AuthenticatedLayout />}>
             <Route path="/" element={<List />} />
-            <Route path="/new" element={<NewSnippet />} />
             <Route path="/snippet/:id" element={<ViewSnippet />} />
+            <Route element={<RequireAuth />}>
+              <Route path="/new" element={<NewSnippet />} />
+            </Route>
             <Route element={<RequireModerator />}>
               <Route path="/moderation" element={<ModerationDashboard />} />
             </Route>

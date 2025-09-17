@@ -4,7 +4,7 @@ import { useAuth } from '../auth'
 
 export default function Navbar() {
   const navigate = useNavigate()
-  const { user, logout } = useAuth()
+  const { user, logout, loading } = useAuth()
   const isModerator = user && (user.role === 'moderator' || user.role === 'admin')
 
   const onLogout = async () => {
@@ -20,16 +20,26 @@ export default function Navbar() {
       <div className="container d-flex justify-content-between align-items-center">
         <Link className="navbar-brand" to="/">Book Snippets</Link>
         <div className="d-flex align-items-center gap-2">
-          <Link className="btn btn-sm btn-primary" to="/new">New</Link>
-          {isModerator && (
-            <Link className="btn btn-sm btn-outline-info" to="/moderation">
-              Moderation
+          {user ? (
+            <>
+              <Link className="btn btn-sm btn-primary" to="/new">New</Link>
+              {isModerator && (
+                <Link className="btn btn-sm btn-outline-info" to="/moderation">
+                  Moderation
+                </Link>
+              )}
+              <span className="text-white-50 small">{user.username}</span>
+              <button className="btn btn-sm btn-outline-light" type="button" onClick={onLogout}>
+                Logout
+              </button>
+            </>
+          ) : loading ? (
+            <span className="text-white-50 small">Loading…</span>
+          ) : (
+            <Link className="btn btn-sm btn-outline-light" to="/login">
+              Sign in
             </Link>
           )}
-          {user && <span className="text-white-50 small">{user.username}</span>}
-          <button className="btn btn-sm btn-outline-light" type="button" onClick={onLogout}>
-            Logout
-          </button>
         </div>
       </div>
     </nav>

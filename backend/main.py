@@ -266,22 +266,40 @@ def get_user_with_password(username: str):
     return dict(row) if row else None
 
 
-def get_current_user(session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME)) -> UserOut:
-    if not session_token:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+def resolve_user_from_session_token(session_token: str) -> Optional[UserOut]:
     try:
         payload = jwt.decode(session_token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
         subject = payload.get("sub")
         if subject is None:
-            raise ValueError("Missing subject")
+            return None
         user_id = int(subject)
     except (JWTError, ValueError):
+        return None
+
+    return get_user_by_id(user_id)
+
+
+def get_current_user(session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME)) -> UserOut:
+    if not session_token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
 
-    user = get_user_by_id(user_id)
+    user = resolve_user_from_session_token(session_token)
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     return user
+
+
+def get_optional_current_user(
+    session_token: Optional[str] = Cookie(None, alias=SESSION_COOKIE_NAME),
+) -> Optional[UserOut]:
+    if not session_token:
+        return None
+
+    user = resolve_user_from_session_token(session_token)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    return user
+
 
 def is_moderator(user: UserOut) -> bool:
     return user.role in {"moderator", "admin"}
@@ -332,16 +350,19 @@ def fetch_comment(comment_id: int, user_id: int) -> Optional[CommentOut]:
     return CommentOut(**dict(row))
 
 
-def list_comments_for_snippet(snippet_id: int, user_id: int) -> List[CommentOut]:
+def list_comments_for_snippet(snippet_id: int, user_id: Optional[int]) -> List[CommentOut]:
     with get_conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
         cur.execute(
             """
             SELECT c.id, c.snippet_id, c.user_id, u.username, c.content, c.created_utc,
                    COALESCE(SUM(CASE WHEN v.vote = 1 THEN 1 ELSE 0 END), 0) AS upvotes,
                    COALESCE(SUM(CASE WHEN v.vote = -1 THEN 1 ELSE 0 END), 0) AS downvotes,
-                   COALESCE((
-                       SELECT vote FROM comment_votes WHERE comment_id = c.id AND user_id = %s
-                   ), 0) AS user_vote
+                   CASE
+                       WHEN %s IS NULL THEN 0
+                       ELSE COALESCE((
+                           SELECT vote FROM comment_votes WHERE comment_id = c.id AND user_id = %s
+                       ), 0)
+                   END AS user_vote
             FROM comments c
             JOIN users u ON u.id = c.user_id
             LEFT JOIN comment_votes v ON v.comment_id = c.id
@@ -349,7 +370,7 @@ def list_comments_for_snippet(snippet_id: int, user_id: int) -> List[CommentOut]
             GROUP BY c.id, c.snippet_id, c.user_id, u.username, c.content, c.created_utc
             ORDER BY c.created_utc DESC
             """,
-            (user_id, snippet_id),
+            (user_id, user_id, snippet_id),
         )
         rows = cur.fetchall()
     return [CommentOut(**dict(r)) for r in rows]
@@ -746,7 +767,7 @@ def delete_snippet(sid: int, current_user: UserOut = Depends(get_current_user)):
     return snippet
 
 @app.get("/api/snippets/{sid}", response_model=SnippetOut)
-def get_snippet(sid: int, current_user: UserOut = Depends(get_current_user)):
+def get_snippet(sid: int, _current_user: Optional[UserOut] = Depends(get_optional_current_user)):
     snippet = fetch_snippet(sid)
     if snippet is None:
         raise HTTPException(status_code=404, detail="Not found")
@@ -755,12 +776,15 @@ def get_snippet(sid: int, current_user: UserOut = Depends(get_current_user)):
 # run: uvicorn main:app --host 127.0.0.1 --port 8000 --reload
 
 @app.get("/api/snippets/{sid}/comments", response_model=List[CommentOut])
-def get_snippet_comments(sid: int, current_user: UserOut = Depends(get_current_user)):
+def get_snippet_comments(
+    sid: int, current_user: Optional[UserOut] = Depends(get_optional_current_user)
+):
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute("SELECT 1 FROM snippets WHERE id = %s", (sid,))
         if cur.fetchone() is None:
             raise HTTPException(status_code=404, detail="Snippet not found")
-    return list_comments_for_snippet(sid, current_user.id)
+    user_id = current_user.id if current_user else None
+    return list_comments_for_snippet(sid, user_id)
 
 
 @app.post("/api/snippets/{sid}/comments", response_model=CommentOut, status_code=201)
