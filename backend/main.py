@@ -723,11 +723,10 @@ def update_snippet(sid: int, payload: SnippetUpdate, current_user: UserOut = Dep
     for field, value in updates.items():
         set_clauses.append(f"{field} = %s")
         values.append(value)
-    values.append(sid)
 
     with get_conn() as conn:
         if set_clauses:
-            update_values = values + [sid]
+            update_values = [*values, sid]
             with conn.cursor() as cur:
                 cur.execute(
                     f"UPDATE snippets SET {', '.join(set_clauses)} WHERE id = %s",
