@@ -2,9 +2,19 @@ import os
 import re
 from collections import defaultdict
 from datetime import datetime, date, timedelta
-from typing import Optional, List, Dict, Tuple
+from threading import Lock
+from typing import Optional, List, Dict, Tuple, Any
 
-from fastapi import FastAPI, HTTPException, Depends, Response, Cookie, status, Query
+from fastapi import (
+    BackgroundTasks,
+    Cookie,
+    Depends,
+    FastAPI,
+    HTTPException,
+    Query,
+    Response,
+    status,
+)
 from fastapi.middleware.cors import CORSMiddleware
 import psycopg2
 import psycopg2.extras
@@ -12,6 +22,8 @@ from pydantic import BaseModel, conint, Field
 from dotenv import load_dotenv
 from jose import JWTError, jwt
 from passlib.hash import bcrypt
+import logging
+import time
 
 load_dotenv()
 
@@ -28,6 +40,93 @@ JWT_ALGORITHM = "HS256"
 JWT_EXP_MINUTES = int(os.getenv("JWT_EXP_MINUTES", str(60 * 24 * 7)))  # default: 7 days
 SESSION_COOKIE_NAME = os.getenv("SESSION_COOKIE_NAME", "session")
 SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", "0").lower() in {"1", "true", "yes"}
+
+logger = logging.getLogger("trending_refresh")
+
+TRENDING_REFRESH_WARN_SECONDS = float(os.getenv("TRENDING_REFRESH_WARN_SECONDS", "5.0"))
+TRENDING_REFRESH_MAX_ERROR_LENGTH = int(os.getenv("TRENDING_REFRESH_MAX_ERROR_LENGTH", "1024"))
+
+_refresh_metrics_lock = Lock()
+_refresh_metrics: Dict[str, Any] = {
+    "in_progress": False,
+    "last_scheduled_at": None,
+    "last_started_at": None,
+    "last_completed_at": None,
+    "last_success_at": None,
+    "last_failure_at": None,
+    "last_duration_seconds": None,
+    "consecutive_failures": 0,
+    "last_error": None,
+    "warning_threshold_seconds": TRENDING_REFRESH_WARN_SECONDS,
+}
+
+
+def _truncate_error_message(message: str) -> str:
+    if len(message) > TRENDING_REFRESH_MAX_ERROR_LENGTH:
+        return message[: TRENDING_REFRESH_MAX_ERROR_LENGTH - 3] + "..."
+    return message
+
+
+def _mark_refresh_start() -> None:
+    started_at = datetime.utcnow()
+    with _refresh_metrics_lock:
+        _refresh_metrics["last_started_at"] = started_at
+        _refresh_metrics["in_progress"] = True
+
+
+def _mark_refresh_success(duration: float) -> None:
+    completed_at = datetime.utcnow()
+    with _refresh_metrics_lock:
+        _refresh_metrics["last_completed_at"] = completed_at
+        _refresh_metrics["last_success_at"] = completed_at
+        _refresh_metrics["last_duration_seconds"] = duration
+        _refresh_metrics["last_error"] = None
+        _refresh_metrics["consecutive_failures"] = 0
+        _refresh_metrics["in_progress"] = False
+    if duration > TRENDING_REFRESH_WARN_SECONDS:
+        logger.warning(
+            "Trending refresh completed in %.2f seconds (threshold %.2f)",
+            duration,
+            TRENDING_REFRESH_WARN_SECONDS,
+        )
+    else:
+        logger.debug("Trending refresh completed in %.2f seconds", duration)
+
+
+def _mark_refresh_failure(duration: float, error: Exception) -> None:
+    completed_at = datetime.utcnow()
+    error_text = _truncate_error_message(f"{type(error).__name__}: {error}")
+    with _refresh_metrics_lock:
+        failures = int(_refresh_metrics.get("consecutive_failures", 0)) + 1
+        _refresh_metrics["last_completed_at"] = completed_at
+        _refresh_metrics["last_failure_at"] = completed_at
+        _refresh_metrics["last_duration_seconds"] = duration
+        _refresh_metrics["last_error"] = error_text
+        _refresh_metrics["consecutive_failures"] = failures
+        _refresh_metrics["in_progress"] = False
+    logger.exception(
+        "Trending refresh failed after %.2f seconds (failure #%d): %s",
+        duration,
+        failures,
+        error_text,
+    )
+
+
+def schedule_trending_refresh(background_tasks: BackgroundTasks) -> None:
+    with _refresh_metrics_lock:
+        _refresh_metrics["last_scheduled_at"] = datetime.utcnow()
+        already_in_progress = bool(_refresh_metrics.get("in_progress"))
+    if already_in_progress:
+        logger.debug(
+            "Trending refresh already running; scheduling another run to follow the current one",
+        )
+    background_tasks.add_task(refresh_trending_view)
+
+
+def get_trending_refresh_metrics() -> Dict[str, Any]:
+    with _refresh_metrics_lock:
+        return dict(_refresh_metrics)
+
 
 def get_conn():
     return psycopg2.connect(**DB_CFG)
@@ -168,6 +267,9 @@ def link_tags_to_snippet(conn, snippet_id: int, tags: List[TagOut]) -> None:
 
 
 def refresh_trending_view() -> None:
+    _mark_refresh_start()
+    start_time = time.monotonic()
+    conn = None
     try:
         conn = psycopg2.connect(**DB_CFG)
     except psycopg2.Error:
@@ -176,10 +278,12 @@ def refresh_trending_view() -> None:
         conn.autocommit = True
         with conn.cursor() as cur:
             cur.execute("REFRESH MATERIALIZED VIEW trending_snippet_activity")
-    except psycopg2.Error:
-        pass
+    except Exception as exc:
+        _mark_refresh_failure(time.monotonic() - start_time, exc)
+        return
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
 class CommentCreate(BaseModel):
     content: str
@@ -496,6 +600,10 @@ def read_current_user(current_user: UserOut = Depends(get_current_user)):
 def healthz():
     return {"ok": True}
 
+@app.get("/api/metrics/trending-refresh")
+def read_trending_refresh_metrics() -> Dict[str, Any]:
+    return get_trending_refresh_metrics()
+
 @app.get("/api/snippets", response_model=List[SnippetOut])
 def list_snippets(
     q: Optional[str] = Query(None, description="Full-text search query"),
@@ -675,7 +783,11 @@ def list_popular_tags(
 
 
 @app.post("/api/snippets", status_code=201)
-def create_snippet(payload: SnippetCreate, current_user: UserOut = Depends(get_current_user)):
+def create_snippet(
+    payload: SnippetCreate,
+    background_tasks: BackgroundTasks,
+    current_user: UserOut = Depends(get_current_user),
+):
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -702,11 +814,16 @@ def create_snippet(payload: SnippetCreate, current_user: UserOut = Depends(get_c
             link_tags_to_snippet(conn, new_id, tags)
         conn.commit()
 
-    refresh_trending_view()
+    schedule_trending_refresh(background_tasks)
     return {"id": new_id}
 
 @app.patch("/api/snippets/{sid}", response_model=SnippetOut)
-def update_snippet(sid: int, payload: SnippetUpdate, current_user: UserOut = Depends(get_current_user)):
+def update_snippet(
+    sid: int,
+    payload: SnippetUpdate,
+    background_tasks: BackgroundTasks,
+    current_user: UserOut = Depends(get_current_user),
+):
     snippet = fetch_snippet(sid)
     if snippet is None:
         raise HTTPException(status_code=404, detail="Not found")
@@ -742,7 +859,7 @@ def update_snippet(sid: int, payload: SnippetUpdate, current_user: UserOut = Dep
 
         conn.commit()
 
-    refresh_trending_view()
+    schedule_trending_refresh(background_tasks)
 
     updated = fetch_snippet(sid)
     if updated is None:
@@ -751,7 +868,11 @@ def update_snippet(sid: int, payload: SnippetUpdate, current_user: UserOut = Dep
 
 
 @app.delete("/api/snippets/{sid}", response_model=SnippetOut)
-def delete_snippet(sid: int, current_user: UserOut = Depends(get_current_user)):
+def delete_snippet(
+    sid: int,
+    background_tasks: BackgroundTasks,
+    current_user: UserOut = Depends(get_current_user),
+):
     snippet = fetch_snippet(sid)
     if snippet is None:
         raise HTTPException(status_code=404, detail="Not found")
@@ -762,7 +883,7 @@ def delete_snippet(sid: int, current_user: UserOut = Depends(get_current_user)):
         cur.execute("DELETE FROM snippets WHERE id = %s", (sid,))
         conn.commit()
 
-    refresh_trending_view()
+    schedule_trending_refresh(background_tasks)
     return snippet
 
 @app.get("/api/snippets/{sid}", response_model=SnippetOut)
@@ -787,7 +908,12 @@ def get_snippet_comments(
 
 
 @app.post("/api/snippets/{sid}/comments", response_model=CommentOut, status_code=201)
-def create_snippet_comment(sid: int, payload: CommentCreate, current_user: UserOut = Depends(get_current_user)):
+def create_snippet_comment(
+    sid: int,
+    payload: CommentCreate,
+    background_tasks: BackgroundTasks,
+    current_user: UserOut = Depends(get_current_user),
+):
     content = (payload.content or "").strip()
     if not content:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Content is required")
@@ -807,7 +933,7 @@ def create_snippet_comment(sid: int, payload: CommentCreate, current_user: UserO
         comment_id = cur.fetchone()[0]
         conn.commit()
 
-    refresh_trending_view()
+    schedule_trending_refresh(background_tasks)
 
     comment = fetch_comment(comment_id, current_user.id)
     if comment is None:
