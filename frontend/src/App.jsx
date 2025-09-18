@@ -60,7 +60,6 @@ export default function App() {
     <AuthProvider>
       <Routes>
         <Route element={<AppLayout />}>
-          <Route element={<AuthenticatedLayout />}>
             <Route path="/" element={<List />} />
             <Route path="/snippet/:id" element={<ViewSnippet />} />
             <Route element={<RequireAuth />}>
@@ -69,7 +68,6 @@ export default function App() {
             <Route element={<RequireModerator />}>
               <Route path="/moderation" element={<ModerationDashboard />} />
             </Route>
-          </Route>
         </Route>
         <Route element={<RequireNoAuth />}>
           <Route path="/login" element={<Login />} />
