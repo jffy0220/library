@@ -36,9 +36,14 @@ export default function Navbar() {
           ) : loading ? (
             <span className="text-white-50 small">Loading…</span>
           ) : (
-            <Link className="btn btn-sm btn-outline-light" to="/login">
-              Sign in
-            </Link>
+            <>
+              <Link className="btn btn-sm btn-outline-light" to="/login">
+                Sign in
+              </Link>
+              <Link className="btn btn-sm btn-primary" to="/register">
+                Register
+              </Link>
+            </>
           )}
         </div>
       </div>

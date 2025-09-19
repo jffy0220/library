@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth'
 
 export default function Login() {
@@ -44,7 +44,7 @@ export default function Login() {
               {error && <div className="alert alert-danger" role="alert">{error}</div>}
               <form onSubmit={onSubmit}>
                 <div className="mb-3">
-                  <label className="form-label" htmlFor="username">Username</label>
+                  <label className="form-label" htmlFor="username">Username or email</label>
                   <input
                     id="username"
                     className="form-control"
@@ -70,6 +70,14 @@ export default function Login() {
                   {submitting ? 'Signing in…' : 'Sign in'}
                 </button>
               </form>
+              <div className="mt-3 text-center">
+                <p className="mb-1">
+                  Need an account? <Link to="/register">Create one</Link>.
+                </p>
+                <p className="mb-0">
+                  Forgot password? <Link to="/forgot-password">Reset it</Link>.
+                </p>
+              </div>
             </div>
           </div>
         </div>

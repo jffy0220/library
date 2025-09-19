@@ -18,7 +18,7 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 import psycopg2
 import psycopg2.extras
-from pydantic import BaseModel, conint, Field
+from pydantic import BaseModel, conint, Field, constr, EmailStr
 from dotenv import load_dotenv
 from jose import JWTError, jwt
 from passlib.hash import bcrypt
@@ -43,6 +43,14 @@ SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", "0").lower() in {"1",
 
 logger = logging.getLogger("trending_refresh")
 
+ONBOARDING_TOKEN_TTL_MINUTES = int(os.getenv("ONBOARDING_TOKEN_TTL_MINUTES", str(48 * 60)))
+PASSWORD_RESET_TOKEN_TTL_MINUTES = int(os.getenv("PASSWORD_RESET_TOKEN_TTL_MINUTES", "60"))
+AUTH_TOKEN_BYTES = int(os.getenv("AUTH_TOKEN_BYTES", "32"))
+EMAIL_SENDER = os.getenv("EMAIL_SENDER", "noreply@example.com")
+
+ONBOARDING_TOKEN_TTL = timedelta(minutes=ONBOARDING_TOKEN_TTL_MINUTES)
+PASSWORD_RESET_TOKEN_TTL = timedelta(minutes=PASSWORD_RESET_TOKEN_TTL_MINUTES)
+
 TRENDING_REFRESH_WARN_SECONDS = float(os.getenv("TRENDING_REFRESH_WARN_SECONDS", "5.0"))
 TRENDING_REFRESH_MAX_ERROR_LENGTH = int(os.getenv("TRENDING_REFRESH_MAX_ERROR_LENGTH", "1024"))
 
@@ -60,6 +68,9 @@ _refresh_metrics: Dict[str, Any] = {
     "warning_threshold_seconds": TRENDING_REFRESH_WARN_SECONDS,
 }
 
+_auth_tokens_lock = Lock()
+_onboarding_tokens: Dict[int, Dict[str, Any]] = {}
+_password_reset_tokens: Dict[int, Dict[str, Any]] = {}
 
 def _truncate_error_message(message: str) -> str:
     if len(message) > TRENDING_REFRESH_MAX_ERROR_LENGTH:
@@ -127,6 +138,67 @@ def get_trending_refresh_metrics() -> Dict[str, Any]:
     with _refresh_metrics_lock:
         return dict(_refresh_metrics)
 
+def _prune_token_store(store: Dict[int, Dict[str, Any]], now: Optional[datetime] = None) -> None:
+    current_time = now or datetime.utcnow()
+    expired_keys = [
+        key
+        for key, record in store.items()
+        if record.get("expires_at") and record["expires_at"] <= current_time
+    ]
+    for key in expired_keys:
+        store.pop(key, None)
+
+
+def _issue_token(
+    store: Dict[int, Dict[str, Any]],
+    user_id: int,
+    email: Optional[str],
+    ttl: timedelta,
+) -> Tuple[str, datetime]:
+    token = secrets.token_urlsafe(AUTH_TOKEN_BYTES)
+    expires_at = datetime.utcnow() + ttl
+    store[user_id] = {
+        "token": token,
+        "email": email,
+        "expires_at": expires_at,
+    }
+    return token, expires_at
+
+
+def issue_onboarding_token(user_id: int, email: str) -> Tuple[str, datetime]:
+    with _auth_tokens_lock:
+        _prune_token_store(_onboarding_tokens)
+        return _issue_token(_onboarding_tokens, user_id, email, ONBOARDING_TOKEN_TTL)
+
+
+def issue_password_reset_token(user_id: int, email: Optional[str]) -> Tuple[str, datetime]:
+    with _auth_tokens_lock:
+        _prune_token_store(_password_reset_tokens)
+        return _issue_token(_password_reset_tokens, user_id, email, PASSWORD_RESET_TOKEN_TTL)
+
+
+def send_onboarding_email(email: str, username: str, token: str, expires_at: datetime) -> None:
+    logger.info(
+        "Sending onboarding email from %s to %s (username=%s, expires=%s): token=%s",
+        EMAIL_SENDER,
+        email,
+        username,
+        expires_at.isoformat(),
+        token,
+    )
+
+
+def send_password_reset_email(
+    email: str, username: str, token: str, expires_at: datetime
+) -> None:
+    logger.info(
+        "Sending password reset email from %s to %s (username=%s, expires=%s): token=%s",
+        EMAIL_SENDER,
+        email,
+        username,
+        expires_at.isoformat(),
+        token,
+    )
 
 def get_conn():
     return psycopg2.connect(**DB_CFG)
@@ -312,6 +384,25 @@ class UserOut(BaseModel):
     role: str
     created_utc: datetime
 
+class RegisterRequest(BaseModel):
+    username: constr(strip_whitespace=True, min_length=3, max_length=80)
+    email: EmailStr
+    password: constr(min_length=8, max_length=256)
+
+
+class RegisterResponse(BaseModel):
+    message: str
+    expires_at: datetime
+
+
+class PasswordResetRequest(BaseModel):
+    identifier: constr(strip_whitespace=True, min_length=3, max_length=255)
+
+
+class PasswordResetResponse(BaseModel):
+    message: str
+    expires_at: datetime
+
 class ReportCreate(BaseModel):
     reason: Optional[str] = None
 
@@ -360,15 +451,42 @@ def get_user_by_id(uid: int) -> Optional[UserOut]:
     return UserOut(**dict(row))
 
 
-def get_user_with_password(username: str):
+def get_user_by_username(username: str):
     with get_conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
         cur.execute(
-             "SELECT id, username, password_hash, role, created_utc FROM users WHERE username = %s",
+             "SELECT id, username, email, role, created_utc FROM users WHERE LOWER(username) = LOWER(%s)",
             (username,),
         )
         row = cur.fetchone()
     return dict(row) if row else None
 
+def get_user_by_email(email: str):
+    with get_conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+        cur.execute(
+            "SELECT id, username, email, role, created_utc FROM users WHERE LOWER(email) = LOWER(%s)",
+            (email,),
+        )
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def get_user_with_password(identifier: str):
+    lookup = identifier.strip()
+    with get_conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+        row = None
+        if "@" in lookup:
+            cur.execute(
+                "SELECT id, username, password_hash, role, created_utc FROM users WHERE LOWER(email) = LOWER(%s)",
+                (lookup,),
+            )
+            row = cur.fetchone()
+        if not row:
+            cur.execute(
+                "SELECT id, username, password_hash, role, created_utc FROM users WHERE LOWER(username) = LOWER(%s)",
+                (lookup,),
+            )
+            row = cur.fetchone()
+    return dict(row) if row else None
 
 def resolve_user_from_session_token(session_token: str) -> Optional[UserOut]:
     try:
@@ -554,9 +672,109 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.post("/api/auth/register", response_model=RegisterResponse, status_code=status.HTTP_201_CREATED)
+def register(payload: RegisterRequest, background_tasks: BackgroundTasks):
+    username = payload.username.strip()
+    email = payload.email.strip().lower()
+    password = payload.password
+
+    with get_conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+        cur.execute(
+            """
+            SELECT username, email
+            FROM users
+            WHERE LOWER(username) = LOWER(%s)
+               OR (email IS NOT NULL AND LOWER(email) = LOWER(%s))
+            LIMIT 1
+            """,
+            (username, email),
+        )
+        existing = cur.fetchone()
+        if existing:
+            existing_data = dict(existing)
+            detail = "Username already registered"
+            existing_email = existing_data.get("email")
+            if existing_email and existing_email.lower() == email:
+                detail = "Email already registered"
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+
+        password_hash = bcrypt.hash(password)
+        try:
+            cur.execute(
+                """
+                INSERT INTO users (username, email, password_hash)
+                VALUES (%s, %s, %s)
+                RETURNING id, username, email, role, created_utc
+                """,
+                (username, email, password_hash),
+            )
+        except psycopg2.errors.UniqueViolation:
+            conn.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Username or email already registered",
+            )
+        row = cur.fetchone()
+        conn.commit()
+
+    if not row:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Unable to create user")
+
+    token, expires_at = issue_onboarding_token(row["id"], email)
+    background_tasks.add_task(
+        send_onboarding_email,
+        email,
+        row["username"],
+        token,
+        expires_at,
+    )
+
+    return RegisterResponse(
+        message="Registration successful. Check your email for verification instructions.",
+        expires_at=expires_at,
+    )
+
+
+@app.post("/api/auth/password-reset", response_model=PasswordResetResponse)
+def request_password_reset(payload: PasswordResetRequest, background_tasks: BackgroundTasks):
+    identifier = payload.identifier.strip()
+    normalized_email: Optional[str] = None
+    user_row = None
+
+    if "@" in identifier:
+        normalized_email = identifier.lower()
+        user_row = get_user_by_email(normalized_email)
+    else:
+        user_row = get_user_by_username(identifier)
+        if user_row and user_row.get("email"):
+            normalized_email = user_row["email"].lower()
+
+    expires_at = datetime.utcnow() + PASSWORD_RESET_TOKEN_TTL
+
+    if user_row and normalized_email:
+        token, expires_at = issue_password_reset_token(user_row["id"], normalized_email)
+        background_tasks.add_task(
+            send_password_reset_email,
+            normalized_email,
+            user_row["username"],
+            token,
+            expires_at,
+        )
+    elif user_row:
+        logger.warning(
+            "Password reset requested for username %s but no email is associated",
+            user_row["username"],
+        )
+
+    return PasswordResetResponse(
+        message="If an account matches the information provided, a reset email has been sent.",
+        expires_at=expires_at,
+    )
+
 @app.post("/api/auth/login", response_model=UserOut)
 def login(payload: LoginRequest, response: Response):
-    user_row = get_user_with_password(payload.username)
+    identifier = payload.username.strip()
+    user_row = get_user_with_password(identifier)
     if not user_row or not bcrypt.verify(payload.password, user_row["password_hash"]):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid username or password")
 

@@ -5,6 +5,8 @@ import List from './pages/List'
 import NewSnippet from './pages/NewSnippet'
 import ViewSnippet from './pages/ViewSnippet'
 import Login from './pages/Login'
+import Register from './pages/Register'
+import ForgotPassword from './pages/ForgotPassword'
 import ModerationDashboard from './pages/ModerationDashboard'
 import { AuthProvider, useAuth } from './auth'
 
@@ -71,6 +73,8 @@ export default function App() {
         </Route>
         <Route element={<RequireNoAuth />}>
           <Route path="/login" element={<Login />} />
+          <Route path="/register" element={<Register />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
