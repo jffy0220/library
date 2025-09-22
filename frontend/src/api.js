@@ -37,6 +37,9 @@ export async function listSnippets(params = {}) {
   if (params.limit) {
     query.set('limit', params.limit)
   }
+  if (params.page) {
+    query.set('page', params.page)
+  }
   const config = {}
   if ([...query.keys()].length > 0) {
     config.params = query

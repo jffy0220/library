@@ -10,20 +10,26 @@ import TagSelector from '../components/TagSelector'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../auth'
 
+const PAGE_SIZE = 20
+
 export default function List() {
   const { user } = useAuth()
   const [ searchParams, setSearchParams ] = useSearchParams();
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [meta, setMeta] = useState({ total: 0, nextPage: null })
   const [availableTags, setAvailableTags] = useState([])
   const [popularTags, setPopularTags] = useState([])
   const [trending, setTrending] = useState([])
   const [sidebarLoading, setSidebarLoading] = useState(true)
   const [sidebarError, setSidebarError] = useState(null)
+  const [pendingPage, setPendingPage] = useState(null)
 
   const q = searchParams.get('q') || ''
   const sort = searchParams.get('sort') || 'recent'
+  const pageParam = Number.parseInt(searchParams.get('page') || '1', 10)
+  const page = Number.isNaN(pageParam) || pageParam < 1 ? 1 : pageParam
   const selectedTags = useMemo(() => {
     const multi = searchParams.getAll('tag')
     if (multi.length > 0) return multi
@@ -38,18 +44,25 @@ export default function List() {
   }, [searchParams])
   const tagsKey = selectedTags.join('|')
 
-  const updateSearchParams = (updates) => {
+  const updateSearchParams = (updates, options = {}) => {
+    const { preservePendingPage = false } = options
+    if (!preservePendingPage) {
+      setPendingPage(null)
+    }
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev)
+      let shouldResetPage = false
       if ('q' in updates) {
         const nextQ = updates.q?.trim()
         if (nextQ) next.set('q', nextQ)
         else next.delete('q')
+        shouldResetPage = true
       }
       if ('sort' in updates) {
         const nextSort = updates.sort
         if (nextSort && nextSort !== 'recent') next.set('sort', nextSort)
         else next.delete('sort')
+        shouldResetPage = true
       }
       if ('tags' in updates) {
         next.delete('tag')
@@ -58,6 +71,18 @@ export default function List() {
           .map((tag) => tag.trim())
           .filter(Boolean)
         tagList.forEach((tag) => next.append('tag', tag))
+        shouldResetPage = true
+      }
+
+      if ('page' in updates) {
+        const nextPage = Number.parseInt(updates.page, 10)
+        if (Number.isFinite(nextPage) && nextPage > 1) {
+          next.set('page', String(nextPage))
+        } else {
+          next.delete('page')
+        }
+      } else if (shouldResetPage) {
+        next.delete('page')
       }
       return next
     })
@@ -67,7 +92,14 @@ export default function List() {
     const normalized = (tagName || '').trim()
     if (!normalized) return
     if (selectedTags.some((tag) => tag.toLowerCase() === normalized.toLowerCase())) return
-    updateSearchParams({ tags: [...selectedTags, normalized] })
+    updateSearchParams({ tags: [...selectedTags, normalized], page: 1 })
+  }
+
+  const goToPage = (nextPageValue) => {
+    const target = Math.max(1, Number.parseInt(nextPageValue, 10) || 1)
+    if (target === page) return
+    setPendingPage(target)
+    updateSearchParams({ page: target }, { preservePendingPage: true })
   }
 
   useEffect(() => {
@@ -80,8 +112,17 @@ export default function List() {
           q: q || undefined,
           tags: selectedTags,
           sort,
+          limit: PAGE_SIZE,
+          page,
         })
-        if (!ignore) setRows(data)
+        if (!ignore) {
+          const items = Array.isArray(data?.items) ? data.items : []
+          setRows(items)
+          setMeta({
+            total: typeof data?.total === 'number' ? data.total : items.length;
+            nextPage: typeof data?.nextPage === 'number' ? data.nextPage : null,
+          })
+        }
       } catch (err) {
         if (!ignore && err?.response?.status !== 401) {
           if (err?.response?.status === 401) {
@@ -91,13 +132,17 @@ export default function List() {
           const detail = err?.response?.data?.detail
           setError(detail || 'Failed to load snippets.')
           setRows([])
+          setMeta({ total: 0, nextPage: null })
         }
       } finally {
-        if (!ignore) setLoading(false)
+        if (!ignore) {
+          setLoading(false)
+          setPendingPage(null)
+        }
       }
     })()
     return () => { ignore = true }
-  }, [q, sort, tagsKey])
+  }, [q, sort, tagsKey, page])
 
   useEffect(() => {
     let ignore = false
@@ -129,7 +174,19 @@ export default function List() {
     }
   }, [])
 
-  if (loading) return <div>Loading…</div>
+  const totalCount = meta.total || 0
+  const nextPageNumber = typeof meta.nextPage === 'number' ? meta.nextPage : null
+  const hasPreviousPage = page > 1
+  const hasNextPage = nextPageNumber != null
+  const hasVisibleResults = !error && rows.length > 0
+  const showingRangeStart = hasVisibleResults && totalCount > 0 ? (page - 1) * PAGE_SIZE + 1 : 0
+  const showingRangeEnd = hasVisibleResults && totalCount > 0
+    ? Math.min((page - 1) * PAGE_SIZE + rows.length, totalCount)
+    : 0
+  const summaryText = loading && rows.length === 0
+    ? 'Loading snippets…'
+    : `${totalCount} snippet${totalCount === 1 ? '' : 's'} found`
+  const isPaginating = pendingPage !== null && loading
 
   return (
     <>
@@ -155,7 +212,7 @@ export default function List() {
                   id="snippet-sort"
                   className="form-select form-select-sm w-auto"
                   value={sort}
-                  onChange={(event) => updateSearchParams({ sort: event.target.value })}
+                  onChange={(event) => updateSearchParams({ sort: event.target.value, page: 1 })}
                 >
                   <option value="recent">Most recent</option>
                   <option value="trending">Trending</option>
@@ -164,7 +221,7 @@ export default function List() {
             </div>
             <div className="card-body d-flex flex-column gap-4">
               <div>
-                <SearchBar value={q} onSearch={(next) => updateSearchParams({ q: next })} />
+                <SearchBar value={q} onSearch={(next) => updateSearchParams({ q: next, page: 1 })} />
                 <small className="text-muted">Search across snippet text and reflections.</small>
               </div>
               <div>
@@ -174,7 +231,7 @@ export default function List() {
                     <button
                       type="button"
                       className="btn btn-link btn-sm p-0"
-                      onClick={() => updateSearchParams({ tags: [] })}
+                      onClick={() => updateSearchParams({ tags: [], page: 1 })}
                     >
                       Clear tags
                     </button>
@@ -183,7 +240,7 @@ export default function List() {
                 <TagSelector
                   availableTags={availableTags}
                   value={selectedTags}
-                  onChange={(next) => updateSearchParams({ tags: next })}
+                  onChange={(next) => updateSearchParams({ tags: next, page: 1 })}
                   showCounts
                 />
               </div>
@@ -191,19 +248,32 @@ export default function List() {
           </div>
 
           <div className="card shadow-sm">
-            <div className="card-header d-flex justify-content-between align-items-center">
-              <span>
-                {loading ? 'Loading snippets…' : `${rows.length} hit${rows.length === 1 ? '' : 's'}`}
-              </span>
-              {q ? <span className="text-muted small">Keyword: “{q}”</span> : null}
-            </div>
+            <div className="card-header d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2">
+              <div className="d-flex flex-column">
+                <span>{summaryText}</span>
+                {hasVisibleResults ? (
+                  <small className="text-muted">
+                    Showing {showingRangeStart}-{showingRangeEnd} · Page {page}
+                  </small>
+                ) : null}
+              </div>
+              <div className="d-flex flex-column align-items-md-end">
+                {q ? <span className="text-muted small">Keyword: “{q}”</span> : null}
+                {selectedTags.length > 0 ? (
+                  <span className="text-muted small">
+                    Tags: {selectedTags.join(', ')}
+                  </span>
+                ) : null}
+              </div>
             <div className="list-group list-group-flush">
               {error ? <div className="list-group-item text-danger">{error}</div> : null}
-              {!error && loading ? <div className="list-group-item">Loading…</div> : null}
+              {!error && loading && rows.length === 0 ? (
+                <div className="list-group-item">Loading…</div>
+              ) : null}
               {!loading && !error && rows.length === 0 ? (
                 <div className="list-group-item text-muted">No snippets found. Try adjusting your filters.</div>
               ) : null}
-              {!loading && !error
+              {!error && rows.length > 0
                 ? rows.map((r) => (
                     <div key={r.id} className="list-group-item">
                       <div className="d-flex w-100 justify-content-between align-items-start flex-wrap gap-2">
@@ -242,6 +312,49 @@ export default function List() {
                     </div>
                   ))
                 : null}
+                {loading && !error && rows.length > 0 ? (
+                <div className="list-group-item text-muted d-flex align-items-center gap-2">
+                  <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                  <span>Updating results…</span>
+                </div>
+              ) : null}
+            </div>
+            {!error && totalCount > 0 ? (
+              <div className="card-footer d-flex flex-column flex-md-row gap-3 justify-content-between align-items-md-center">
+                <small className="text-muted">
+                  {hasVisibleResults
+                    ? (
+                      <>Showing {showingRangeStart}-{showingRangeEnd} of {totalCount} snippet{totalCount === 1 ? '' : 's'}</>
+                    ) : (
+                      <>No snippets on this page. Total results: {totalCount}</>
+                    )}
+                </small>
+                <div className="d-flex align-items-center gap-2">
+                  <button
+                    type="button"
+                    className="btn btn-outline-secondary btn-sm"
+                    disabled={!hasPreviousPage || loading}
+                    onClick={() => hasPreviousPage && goToPage(page - 1)}
+                  >
+                    Previous
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-outline-secondary btn-sm"
+                    disabled={!hasNextPage || loading}
+                    onClick={() => hasNextPage && goToPage(nextPageNumber)}
+                  >
+                    Next
+                  </button>
+                  {isPaginating ? (
+                    <span className="text-muted d-flex align-items-center gap-2">
+                      <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                      <span>Loading page…</span>
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
             </div>
           </div>
         </div>

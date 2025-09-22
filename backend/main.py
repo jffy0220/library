@@ -248,6 +248,14 @@ class SnippetWithStats(SnippetOut):
     tag_count: int = 0
     lexeme_count: int = 0
 
+class SnippetListResponse(BaseModel):
+    items: List[SnippetOut]
+    total: int
+    next_page: Optional[int] = Field(default=None, alias="nextPage")
+
+    class Config:
+        allow_population_by_field_name = True
+
 TAG_SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 
@@ -822,13 +830,14 @@ def healthz():
 def read_trending_refresh_metrics() -> Dict[str, Any]:
     return get_trending_refresh_metrics()
 
-@app.get("/api/snippets", response_model=List[SnippetOut])
+@app.get("/api/snippets", response_model=SnippetListResponse)
 def list_snippets(
     q: Optional[str] = Query(None, description="Full-text search query"),
     tags_csv: Optional[str] = Query(None, alias="tags", description="Comma separated list of tags"),
     tags_multi: Optional[List[str]] = Query(None, alias="tag", description="Repeatable tag filters"),
     sort: str = Query("recent", description="Sort order: recent, trending, or relevance"),
     limit: int = Query(50, ge=1, le=200),
+    page: int = Query(1, ge=1, description="1-based page number for pagination")
 ):
     sort_key = sort.lower().strip()
     allowed_sorts = {"recent", "trending", "relevance"}
@@ -913,23 +922,39 @@ def list_snippets(
             if where_clauses:
                 where_sql = " WHERE " + " AND ".join(where_clauses)
 
+            filter_params = list(params)
+            count_query = (
+                "SELECT COUNT(DISTINCT s.id) FROM snippets s "
+                + " ".join(joins)
+                + where_sql
+            )
+            cur.execute(count_query, filter_params)
+            count_row = cur.fetchone()
+            total = int(count_row[0]) if count_row else 0
+
+            offset = max((page - 1) * limit, 0)
+
             query = (
                 "SELECT "
                 + ", ".join(select_fields)
                 + " FROM snippets s "
                 + " ".join(joins)
                 + where_sql
-                + f" ORDER BY {order_clause} LIMIT %s"
+                + f" ORDER BY {order_clause} LIMIT %s OFFSET %s"
             )
-            params.append(limit)
-            cur.execute(query, params)
+            query_params = filter_params + [limit, offset]
+            cur.execute(query, query_params)
             rows = cur.fetchall()
 
         snippets = [SnippetOut(**dict(row)) for row in rows]
         tag_map = fetch_tags_for_snippets(conn, [snippet.id for snippet in snippets])
         for snippet in snippets:
             snippet.tags = tag_map.get(snippet.id, [])
-    return snippets
+        next_page = None
+        if offset + len(snippets) < total:
+                next_page = page + 1
+
+    return SnippetListResponse(items=snippets, total=total, next_page=next_page)
 
 
 @app.get("/api/snippets/trending", response_model=List[SnippetWithStats])
