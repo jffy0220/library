@@ -32,6 +32,14 @@ from backend.email.providers import (
     load_email_config,
 )
 
+from backend.group_service import (
+    fetch_group,
+    fetch_group_membership,
+    is_private_group,
+    is_site_admin,
+    is_site_moderator,
+)
+
 load_dotenv()
 
 DB_CFG = dict(
@@ -319,7 +327,7 @@ class TagSummary(TagOut):
     usage_count: int
 
 class SnippetCreate(SnippetBase):
-    pass
+    group_id: Optional[int] = None
 
 class SnippetUpdate(BaseModel):
     date_read: Optional[date] = None
@@ -336,6 +344,7 @@ class SnippetOut(SnippetBase):
     created_utc: datetime
     created_by_user_id: Optional[int]
     created_by_username: Optional[str]
+    group_id: Optional[int] = None
     tags: List[TagOut] = Field(default_factory=list)
 
 
@@ -480,6 +489,7 @@ class CommentOut(BaseModel):
     upvotes: int
     downvotes: int
     user_vote: int
+    group_id: Optional[int] = None
 
 
 class UserOut(BaseModel):
@@ -628,7 +638,11 @@ def get_optional_current_user(
 
 
 def is_moderator(user: UserOut) -> bool:
-    return user.role in {"moderator", "admin"}
+    return is_site_moderator(user)
+
+
+def is_admin(user: UserOut) -> bool:
+    return is_site_admin(user)
 
 
 def fetch_snippet(snippet_id: int) -> Optional[SnippetOut]:
@@ -637,7 +651,8 @@ def fetch_snippet(snippet_id: int) -> Optional[SnippetOut]:
             cur.execute(
                 """
                 SELECT s.id, s.created_utc, s.date_read, s.book_name, s.page_number, s.chapter, s.verse,
-                       s.text_snippet, s.thoughts, s.created_by_user_id, u.username AS created_by_username
+                       s.text_snippet, s.thoughts, s.created_by_user_id, s.group_id,
+                       u.username AS created_by_username
                 FROM snippets s
                 LEFT JOIN users u ON u.id = s.created_by_user_id
                 WHERE s.id = %s
@@ -656,7 +671,7 @@ def fetch_comment(comment_id: int, user_id: int) -> Optional[CommentOut]:
     with get_conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
         cur.execute(
             """
-            SELECT c.id, c.snippet_id, c.user_id, u.username, c.content, c.created_utc,
+            SELECT c.id, c.snippet_id, c.user_id, u.username, c.content, c.created_utc, c.group_id,
                    COALESCE(SUM(CASE WHEN v.vote = 1 THEN 1 ELSE 0 END), 0) AS upvotes,
                    COALESCE(SUM(CASE WHEN v.vote = -1 THEN 1 ELSE 0 END), 0) AS downvotes,
                    COALESCE((
@@ -666,7 +681,7 @@ def fetch_comment(comment_id: int, user_id: int) -> Optional[CommentOut]:
             JOIN users u ON u.id = c.user_id
             LEFT JOIN comment_votes v ON v.comment_id = c.id
             WHERE c.id = %s
-            GROUP BY c.id, c.snippet_id, c.user_id, u.username, c.content, c.created_utc
+            GROUP BY c.id, c.snippet_id, c.user_id, u.username, c.content, c.created_utc, c.group_id
             """,
             (user_id, comment_id),
         )
@@ -680,7 +695,7 @@ def list_comments_for_snippet(snippet_id: int, user_id: Optional[int]) -> List[C
     with get_conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
         cur.execute(
             """
-            SELECT c.id, c.snippet_id, c.user_id, u.username, c.content, c.created_utc,
+            SELECT c.id, c.snippet_id, c.user_id, u.username, c.content, c.created_utc, c.group_id,
                    COALESCE(SUM(CASE WHEN v.vote = 1 THEN 1 ELSE 0 END), 0) AS upvotes,
                    COALESCE(SUM(CASE WHEN v.vote = -1 THEN 1 ELSE 0 END), 0) AS downvotes,
                    CASE
@@ -693,7 +708,7 @@ def list_comments_for_snippet(snippet_id: int, user_id: Optional[int]) -> List[C
             JOIN users u ON u.id = c.user_id
             LEFT JOIN comment_votes v ON v.comment_id = c.id
             WHERE c.snippet_id = %s
-            GROUP BY c.id, c.snippet_id, c.user_id, u.username, c.content, c.created_utc
+            GROUP BY c.id, c.snippet_id, c.user_id, u.username, c.content, c.created_utc, c.group_id
             ORDER BY c.created_utc DESC
             """,
             (user_id, user_id, snippet_id),
@@ -967,6 +982,7 @@ def list_snippets(
                 "s.text_snippet",
                 "s.thoughts",
                 "s.created_by_user_id",
+                "s.group_id",
                 "u.username AS created_by_username",
             ]
             joins = ["LEFT JOIN users u ON u.id = s.created_by_user_id"]
@@ -1060,7 +1076,8 @@ def list_trending_snippets(limit: int = Query(6, ge=1, le=50)):
             cur.execute(
                 """
                 SELECT s.id, s.created_utc, s.date_read, s.book_name, s.page_number, s.chapter, s.verse,
-                       s.text_snippet, s.thoughts, s.created_by_user_id, u.username AS created_by_username,
+                       s.text_snippet, s.thoughts, s.created_by_user_id, s.group_id,
+                       u.username AS created_by_username,
                        COALESCE(tsa.recent_comment_count, 0) AS recent_comment_count,
                        COALESCE(tsa.tag_count, 0) AS tag_count,
                        COALESCE(tsa.lexeme_count, 0) AS lexeme_count
@@ -1128,11 +1145,22 @@ def create_snippet(
     current_user: UserOut = Depends(get_current_user),
 ):
     with get_conn() as conn:
+        target_group = None
+        if payload.group_id is not None:
+            target_group = fetch_group(conn, group_id=payload.group_id)
+            if target_group is None:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Group not found")
+            membership = fetch_group_membership(conn, payload.group_id, current_user.id)
+            if is_private_group(target_group) and not (membership or is_moderator(current_user)):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Membership required to post in this private group",
+                )
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO snippets (date_read, book_name, page_number, chapter, verse, text_snippet, thoughts, created_by_user_id)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO snippets (date_read, book_name, page_number, chapter, verse, text_snippet, thoughts, group_id, created_by_user_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
             """,
                 (
@@ -1257,20 +1285,37 @@ def create_snippet_comment(
     if not content:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Content is required")
 
-    with get_conn() as conn, conn.cursor() as cur:
-        cur.execute("SELECT 1 FROM snippets WHERE id = %s", (sid,))
-        if cur.fetchone() is None:
-            raise HTTPException(status_code=404, detail="Snippet not found")
-        cur.execute(
-            """
-            INSERT INTO comments (snippet_id, user_id, content)
-            VALUES (%s, %s, %s)
-            RETURNING id
-            """,
-            (sid, current_user.id, content),
-        )
-        comment_id = cur.fetchone()[0]
-        conn.commit()
+    with get_conn() as conn:
+        snippet_group_id: Optional[int] = None
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            cur.execute("SELECT id, group_id FROM snippets WHERE id = %s", (sid,))
+            snippet_row = cur.fetchone()
+            if snippet_row is None:
+                raise HTTPException(status_code=404, detail="Snippet not found")
+            snippet_group_id = snippet_row["group_id"]
+
+        if snippet_group_id is not None:
+            group = fetch_group(conn, group_id=snippet_group_id)
+            if group is None:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Group not found")
+            membership = fetch_group_membership(conn, snippet_group_id, current_user.id)
+            if is_private_group(group) and not (membership or is_moderator(current_user)):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Membership required to comment in this private group",
+                )
+
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO comments (snippet_id, user_id, content)
+                VALUES (%s, %s, %s)
+                RETURNING id
+                """,
+                (sid, current_user.id, content),
+            )
+            comment_id = cur.fetchone()[0]
+            conn.commit()
 
     schedule_trending_refresh(background_tasks)
 
@@ -1416,3 +1461,8 @@ def resolve_report(report_id: int, payload: ReportResolve, current_user: UserOut
     if report is None:
         raise HTTPException(status_code=500, detail="Unable to load report")
     return report
+
+
+from backend import groups as group_routes
+
+app.include_router(group_routes.router)
