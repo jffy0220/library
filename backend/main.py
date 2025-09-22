@@ -25,6 +25,13 @@ from passlib.hash import bcrypt
 import logging
 import time
 
+from backend.email.providers import (
+    EmailProvider,
+    EmailConfig,
+    create_email_provider,
+    load_email_config,
+)
+
 load_dotenv()
 
 DB_CFG = dict(
@@ -46,7 +53,11 @@ logger = logging.getLogger("trending_refresh")
 ONBOARDING_TOKEN_TTL_MINUTES = int(os.getenv("ONBOARDING_TOKEN_TTL_MINUTES", str(48 * 60)))
 PASSWORD_RESET_TOKEN_TTL_MINUTES = int(os.getenv("PASSWORD_RESET_TOKEN_TTL_MINUTES", "60"))
 AUTH_TOKEN_BYTES = int(os.getenv("AUTH_TOKEN_BYTES", "32"))
-EMAIL_SENDER = os.getenv("EMAIL_SENDER", "noreply@example.com")
+EMAIL_CONFIG: EmailConfig = load_email_config()
+EMAIL_SENDER = EMAIL_CONFIG.sender
+
+_email_provider: EmailProvider = create_email_provider(EMAIL_CONFIG)
+
 
 ONBOARDING_TOKEN_TTL = timedelta(minutes=ONBOARDING_TOKEN_TTL_MINUTES)
 PASSWORD_RESET_TOKEN_TTL = timedelta(minutes=PASSWORD_RESET_TOKEN_TTL_MINUTES)
@@ -71,6 +82,14 @@ _refresh_metrics: Dict[str, Any] = {
 _auth_tokens_lock = Lock()
 _onboarding_tokens: Dict[int, Dict[str, Any]] = {}
 _password_reset_tokens: Dict[int, Dict[str, Any]] = {}
+
+def get_email_provider() -> EmailProvider:
+    return _email_provider
+
+
+def set_email_provider(provider: EmailProvider) -> None:
+    global _email_provider
+    _email_provider = provider
 
 def _truncate_error_message(message: str) -> str:
     if len(message) > TRENDING_REFRESH_MAX_ERROR_LENGTH:
@@ -178,26 +197,103 @@ def issue_password_reset_token(user_id: int, email: Optional[str]) -> Tuple[str,
 
 
 def send_onboarding_email(email: str, username: str, token: str, expires_at: datetime) -> None:
+    provider = get_email_provider()
+    metadata = {
+        "token": token,
+        "username": username,
+        "expires_at": expires_at.isoformat(),
+        "email_type": "onboarding",
+    }
+    log_context = {
+        **provider.describe(),
+        "email_sender": EMAIL_SENDER,
+        "email_recipient": email,
+        "email_username": username,
+        "email_expires_at": expires_at.isoformat(),
+        "email_token": token,
+        "email_type": "onboarding",
+    }
     logger.info(
-        "Sending onboarding email from %s to %s (username=%s, expires=%s): token=%s",
-        EMAIL_SENDER,
-        email,
-        username,
-        expires_at.isoformat(),
-        token,
+        "Dispatching onboarding email",
+        extra={**log_context, "email_event": "onboarding.dispatch.start"},
+    )
+    subject = "Welcome to the Library"
+    body = (
+        f"Hello {username},\n\n"
+        "Thanks for signing up for the Library app. "
+        "Use the verification token below to finish creating your account:\n\n"
+        f"{token}\n\n"
+        f"The token expires at {expires_at.isoformat()}.\n"
+    )
+    try:
+        provider.send_email(
+            sender=EMAIL_SENDER,
+            recipient=email,
+            subject=subject,
+            body=body,
+            metadata=metadata,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to send onboarding email",
+            extra={**log_context, "email_event": "onboarding.dispatch.error"},
+        )
+        raise
+    logger.info(
+        "Onboarding email dispatched",
+        extra={**log_context, "email_event": "onboarding.dispatch.success"},
     )
 
 
 def send_password_reset_email(
     email: str, username: str, token: str, expires_at: datetime
 ) -> None:
+    provider = get_email_provider()
+    metadata = {
+        "token": token,
+        "username": username,
+        "expires_at": expires_at.isoformat(),
+        "email_type": "password_reset",
+    }
+    log_context = {
+        **provider.describe(),
+        "email_sender": EMAIL_SENDER,
+        "email_recipient": email,
+        "email_username": username,
+        "email_expires_at": expires_at.isoformat(),
+        "email_token": token,
+        "email_type": "password_reset",
+    }
     logger.info(
-        "Sending password reset email from %s to %s (username=%s, expires=%s): token=%s",
-        EMAIL_SENDER,
-        email,
-        username,
-        expires_at.isoformat(),
-        token,
+        "Dispatching password reset email",
+        extra={**log_context, "email_event": "password_reset.dispatch.start"},
+    )
+    subject = "Reset your Library password"
+    body = (
+        f"Hello {username},\n\n"
+        "A password reset was requested for your Library account. "
+        "Use the token below to proceed:\n\n"
+        f"{token}\n\n"
+        f"This token expires at {expires_at.isoformat()}.\n"
+        "If you did not request a reset you can ignore this message.\n"
+    )
+    try:
+        provider.send_email(
+            sender=EMAIL_SENDER,
+            recipient=email,
+            subject=subject,
+            body=body,
+            metadata=metadata,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to send password reset email",
+            extra={**log_context, "email_event": "password_reset.dispatch.error"},
+        )
+        raise
+    logger.info(
+        "Password reset email dispatched",
+        extra={**log_context, "email_event": "password_reset.dispatch.success"},
     )
 
 def get_conn():

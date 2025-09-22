@@ -119,7 +119,7 @@ export default function List() {
           const items = Array.isArray(data?.items) ? data.items : []
           setRows(items)
           setMeta({
-            total: typeof data?.total === 'number' ? data.total : items.length;
+            total: typeof data?.total === 'number' ? data.total : items.length,
             nextPage: typeof data?.nextPage === 'number' ? data.nextPage : null,
           })
         }
