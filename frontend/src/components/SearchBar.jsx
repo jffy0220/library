@@ -16,13 +16,13 @@ export default function SearchBar({ value, onSearch, placeholder = 'Search…', 
   }, [term, onSearch, debounce])
 
   return (
-    <div className="input-group">
-      <span className="input-group-text" aria-hidden="true">
+    <div className="search-bar" role="search">
+      <span className="search-bar__icon" aria-hidden="true">
         🔍
       </span>
       <input
         type="search"
-        className="form-control"
+        className="search-bar__input"
         value={term}
         onChange={(event) => setTerm(event.target.value)}
         placeholder={placeholder}
@@ -31,7 +31,7 @@ export default function SearchBar({ value, onSearch, placeholder = 'Search…', 
       {term ? (
         <button
           type="button"
-          className="btn btn-outline-secondary"
+          className="search-bar__clear"
           onClick={() => {
             setTerm('')
             if (onSearch) onSearch('')

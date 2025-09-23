@@ -10,7 +10,7 @@ import ForgotPassword from './pages/ForgotPassword'
 import ModerationDashboard from './pages/ModerationDashboard'
 import GroupDiscover from './pages/Groups/GroupDiscover'
 import GroupFeed from './pages/Groups/GroupFeed'
-import GroupManage from './pages/Groups/GroupManage'
+import GroupManager from './pages/Groups/GroupManager'
 import GroupInviteAccept from './pages/Groups/GroupInviteAccept'
 import GroupsLayout from './pages/Groups/GroupsLayout'
 import { AuthProvider, useAuth } from './auth'
@@ -18,7 +18,7 @@ import { AuthProvider, useAuth } from './auth'
 function RequireAuth() {
   const { user, loading } = useAuth()
   if (loading) {
-    return <div className="container mt-5">Loading…</div>
+    return <div className="callout">Loading…</div>
   }
   if (!user) {
     return <Navigate to="/login" replace />
@@ -29,7 +29,7 @@ function RequireAuth() {
 function RequireModerator() {
   const { user, loading } = useAuth()
   if (loading) {
-    return <div className="container mt-5">Loading…</div>
+    return <div className="callout">Loading…</div>
   }
   if (!user) {
     return <Navigate to="/login" replace />
@@ -43,7 +43,7 @@ function RequireModerator() {
 function RequireNoAuth() {
   const { user, loading } = useAuth()
   if (loading) {
-    return <div className="container mt-5">Loading…</div>
+    return <div className="callout">Loading…</div>
   }
   if (user) {
     return <Navigate to="/" replace />
@@ -53,12 +53,14 @@ function RequireNoAuth() {
 
 function AppLayout() {
   return (
-    <>
+    <div className="app-shell">
       <Navbar />
-      <div className="container">
-        <Outlet />
-      </div>
-    </>
+      <main className="app-content">
+        <div className="app-content__inner">
+          <Outlet />
+        </div>
+      </main>
+    </div>
   )
 }
 
@@ -76,7 +78,7 @@ export default function App() {
                 <Route path="discover" element={<GroupDiscover />} />
                 <Route path="invite/:inviteCode" element={<GroupInviteAccept />} />
                 <Route path=":groupSlug" element={<GroupFeed />} />
-                <Route path=":groupSlug/manage" element={<GroupManage />} />
+                <Route path=":groupSlug/manage" element={<GroupManager />} />
               </Route>
             </Route>
             <Route element={<RequireModerator />}>

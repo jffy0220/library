@@ -25,20 +25,41 @@ from passlib.hash import bcrypt
 import logging
 import time
 
-from backend.email_service.providers import (
-    EmailProvider,
-    EmailConfig,
-    create_email_provider,
-    load_email_config,
-)
+try:
+    from backend.email_service.providers import (
+        EmailProvider,
+        EmailConfig,
+        create_email_provider,
+        load_email_config,
+    )
+except ModuleNotFoundError as exc:
+    if exc.name != "backend":
+        raise
+    from email_service.providers import (  # type: ignore[no-redef]
+        EmailProvider,
+        EmailConfig,
+        create_email_provider,
+        load_email_config,
+    )
 
-from backend.group_service import (
-    fetch_group,
-    fetch_group_membership,
-    is_private_group,
-    is_site_admin,
-    is_site_moderator,
-)
+try:
+    from backend.group_service import (
+        fetch_group,
+        fetch_group_membership,
+        is_private_group,
+        is_site_admin,
+        is_site_moderator,
+    )
+except ModuleNotFoundError as exc:
+    if exc.name != "backend":
+        raise
+    from group_service import (  # type: ignore[no-redef]
+        fetch_group,
+        fetch_group_membership,
+        is_private_group,
+        is_site_admin,
+        is_site_moderator,
+    )
 
 load_dotenv()
 
@@ -1463,6 +1484,11 @@ def resolve_report(report_id: int, payload: ReportResolve, current_user: UserOut
     return report
 
 
-from backend import groups as group_routes
+try:
+    from backend import groups as group_routes
+except ModuleNotFoundError as exc:
+    if exc.name != "backend":
+        raise
+    import groups as group_routes  # type: ignore[no-redef]
 
 app.include_router(group_routes.router)

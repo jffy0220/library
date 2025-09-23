@@ -102,12 +102,12 @@ export default function GroupSelector({ value, onChange, disabled = false, helpe
 
   return (
     <div className="group-selector" data-testid="group-selector">
-      <div className="d-flex justify-content-between align-items-center mb-2">
+      <div className="group-selector__header">
         <label className="form-label mb-0">Share with a group</label>
         {loading && <span className="text-muted small">Loading groups…</span>}
       </div>
       <select
-        className="form-select"
+        className="group-selector__select"
         value={value == null ? '' : String(value)}
         onChange={handleChange}
         disabled={disabled || loading || groups.length === 0}
@@ -119,13 +119,18 @@ export default function GroupSelector({ value, onChange, disabled = false, helpe
           </option>
         ))}
       </select>
-      <div className="form-text">
+      <div className="group-selector__message">
         {error ? (
           <span className="text-danger">{error}</span>
         ) : (
           <>
             {visibilityMessage}
-            {helperText && <><br />{helperText}</>}
+            {helperText && (
+              <>
+                <br />
+                {helperText}
+              </>
+            )}
           </>
         )}
       </div>

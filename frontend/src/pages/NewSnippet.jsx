@@ -68,72 +68,79 @@ export default function NewSnippet() {
   }
 
   return (
-    <div className="card shadow-sm">
-      <div className="card-header">New snippet</div>
-      <div className="card-body">
-        {msg && <div className="alert alert-danger">{msg}</div>}
-        <form onSubmit={onSubmit}>
-          <div className="row g-3">
-            <div className="col-md-4">
-              <label className="form-label">Date read (YYYY-MM-DD)</label>
-              <input name="date_read" className="form-control" value={form.date_read} onChange={onChange}/>
-            </div>
-            <div className="col-md-8">
-              <label className="form-label">Book name</label>
-              <input name="book_name" className="form-control" value={form.book_name} onChange={onChange}/>
-            </div>
-            <div className="col-md-6">
-              <label className="form-label">User</label>
-              <input className="form-control" value={user?.username || ''} readOnly />
-              <div className="form-text">Signed in user</div>
-            </div>
-            <div className="col-md-6">
-              <GroupSelector
-                value={groupId}
-                onChange={setGroupId}
-                helperText="Choose a group to limit visibility to invited members."
-              />
-            </div>
-            <div className="col-md-3">
-              <label className="form-label">Page number</label>
-              <input name="page_number" className="form-control" value={form.page_number} onChange={onChange}/>
-            </div>
-            <div className="col-md-3">
-              <label className="form-label">Chapter</label>
-              <input name="chapter" className="form-control" value={form.chapter} onChange={onChange}/>
-            </div>
-            <div className="col-md-3">
-              <label className="form-label">Verse</label>
-              <input name="verse" className="form-control" value={form.verse} onChange={onChange}/>
-            </div>
-            <div className="col-12">
-              <label className="form-label">Text snippet</label>
-              <textarea name="text_snippet" rows="5" className="form-control" value={form.text_snippet} onChange={onChange}/>
-            </div>
-            <div className="col-12">
-              <label className="form-label">Thoughts</label>
-              <textarea name="thoughts" rows="4" className="form-control" value={form.thoughts} onChange={onChange}/>
-            </div>
-            <div className="col-12">
-              <label className="form-label">Tags</label>
-              <TagSelector
-                availableTags={availableTags}
-                value={tags}
-                onChange={setTags}
-                allowCustom
-                placeholder="Add a tag and press Add"
-                showCounts
-              />
-              <div className="form-text">
-                {loadingTags ? 'Loading tag suggestions…' : 'Select existing tags or add your own to help readers find this snippet.'}
-              </div>
-            </div>
-          </div>
-          <div className="mt-3">
-            <button className="btn btn-primary" type="submit">Submit</button>
-          </div>
-        </form>
+    <div className="form-card">
+      <div className="form-card__header">
+        <h1 className="form-card__title">New snippet</h1>
+        <p className="text-muted mb-0">
+          Capture the highlight, share your reflection, and choose tags so the community can discover it.
+        </p>
       </div>
+      {msg && <div className="alert alert-danger">{msg}</div>}
+      <form onSubmit={onSubmit} className="d-flex flex-column gap-4">
+        <div className="row g-3">
+          <div className="col-md-4">
+            <label className="form-label">Date read (YYYY-MM-DD)</label>
+            <input name="date_read" className="form-control" value={form.date_read} onChange={onChange} />
+          </div>
+          <div className="col-md-8">
+            <label className="form-label">Book name</label>
+            <input name="book_name" className="form-control" value={form.book_name} onChange={onChange} />
+          </div>
+          <div className="col-md-6">
+            <label className="form-label">User</label>
+            <input className="form-control" value={user?.username || ''} readOnly />
+            <div className="form-text">Signed in user</div>
+          </div>
+          <div className="col-md-6">
+            <GroupSelector
+              value={groupId}
+              onChange={setGroupId}
+              helperText="Choose a group to limit visibility to invited members."
+            />
+          </div>
+          <div className="col-md-3">
+            <label className="form-label">Page number</label>
+            <input name="page_number" className="form-control" value={form.page_number} onChange={onChange} />
+          </div>
+          <div className="col-md-3">
+            <label className="form-label">Chapter</label>
+            <input name="chapter" className="form-control" value={form.chapter} onChange={onChange} />
+          </div>
+          <div className="col-md-3">
+            <label className="form-label">Verse</label>
+            <input name="verse" className="form-control" value={form.verse} onChange={onChange} />
+          </div>
+          <div className="col-12">
+            <label className="form-label">Text snippet</label>
+            <textarea name="text_snippet" rows="5" className="form-control" value={form.text_snippet} onChange={onChange} />
+          </div>
+          <div className="col-12">
+            <label className="form-label">Thoughts</label>
+            <textarea name="thoughts" rows="4" className="form-control" value={form.thoughts} onChange={onChange} />
+          </div>
+          <div className="col-12">
+            <label className="form-label">Tags</label>
+            <TagSelector
+              availableTags={availableTags}
+              value={tags}
+              onChange={setTags}
+              allowCustom
+              placeholder="Add a tag and press Add"
+              showCounts
+            />
+            <div className="form-text">
+              {loadingTags
+                ? 'Loading tag suggestions…'
+                : 'Select existing tags or add your own to help readers find this snippet.'}
+            </div>
+          </div>
+        </div>
+        <div className="d-flex justify-content-end">
+          <button className="btn btn-primary" type="submit">
+            Submit
+          </button>
+        </div>
+      </form>
     </div>
   )
 }

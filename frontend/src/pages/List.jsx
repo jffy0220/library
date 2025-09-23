@@ -187,25 +187,59 @@ export default function List() {
     ? 'Loading snippets…'
     : `${totalCount} snippet${totalCount === 1 ? '' : 's'} found`
   const isPaginating = pendingPage !== null && loading
+  const trendingCommentTotal = trending.reduce((total, item) => total + (item.recent_comment_count || 0), 0)
 
   return (
-    <>
+    <div className="home-page">
       {!user && (
-        <div className="alert alert-info">
+        <div className="callout">
           Want to share your own discoveries?{' '}
           <Link to="/login" className="alert-link">
-            Sign In
+            Sign in
           </Link>{' '}
           to contribute snippets and join the discussion.
         </div>
       )}
-      <div className="row g-4">
-        <div className="col-lg-8">
-          <div className="card shadow-sm mb-4">
-            <div className="card-header d-flex flex-column flex-lg-row gap-2 gap-lg-3 justify-content-between align-items-lg-center">
-              <h5 className="mb-0">Discover snippets</h5>
-              <div className="d-flex align-items-center gap-2">
-                <label className="form-label mb-0 text-muted" htmlFor="snippet-sort">
+
+      <section className="home-hero">
+        <div className="home-hero__content">
+          <h1 className="home-hero__headline">Collect the lines worth remembering</h1>
+          <p className="home-hero__lead">
+            Build a feed inspired by your favorite communities on Facebook, X, and Reddit. Follow what the
+            library is reading, remix tags, and bring new color to the conversation.
+          </p>
+          <div className="home-hero__actions">
+            <Link className="btn btn-primary" to={user ? '/new' : '/register'}>
+              {user ? 'Share a snippet' : 'Join the library'}
+            </Link>
+            <Link className="btn btn-outline-light" to={user ? '/groups' : '/login'}>
+              {user ? 'Browse your groups' : 'Preview the feed'}
+            </Link>
+          </div>
+        </div>
+        <div className="home-hero__stats">
+          <div className="stat-tile">
+            <span className="stat-value">{totalCount.toLocaleString()}</span>
+            <span className="stat-label">Snippets indexed</span>
+          </div>
+          <div className="stat-tile">
+            <span className="stat-value">{popularTags.length}</span>
+            <span className="stat-label">Trending tags this week</span>
+          </div>
+          <div className="stat-tile">
+            <span className="stat-value">{trendingCommentTotal.toLocaleString()}</span>
+            <span className="stat-label">Fresh comments</span>
+          </div>
+        </div>
+      </section>
+
+      <div className="home-layout">
+        <div className="home-layout__main d-flex flex-column gap-4">
+          <section className="filter-panel">
+            <div className="filter-panel__header">
+              <h2 className="filter-panel__title">Discover snippets</h2>
+              <div className="filter-panel__sort">
+                <label className="form-label mb-0" htmlFor="snippet-sort">
                   Sort by
                 </label>
                 <select
@@ -219,117 +253,116 @@ export default function List() {
                 </select>
               </div>
             </div>
-            <div className="card-body d-flex flex-column gap-4">
-              <div>
-                <SearchBar value={q} onSearch={(next) => updateSearchParams({ q: next, page: 1 })} />
-                <small className="text-muted">Search across snippet text and reflections.</small>
-              </div>
-              <div>
-                <div className="d-flex justify-content-between align-items-center mb-2">
-                  <h6 className="mb-0">Filter by tag</h6>
-                  {selectedTags.length > 0 ? (
-                    <button
-                      type="button"
-                      className="btn btn-link btn-sm p-0"
-                      onClick={() => updateSearchParams({ tags: [], page: 1 })}
-                    >
-                      Clear tags
-                    </button>
-                  ) : null}
-                </div>
-                <TagSelector
-                  availableTags={availableTags}
-                  value={selectedTags}
-                  onChange={(next) => updateSearchParams({ tags: next, page: 1 })}
-                  showCounts
-                />
-              </div>
+            <div>
+              <SearchBar value={q} onSearch={(next) => updateSearchParams({ q: next, page: 1 })} />
+              <div className="search-help">Search across snippet text and reflections.</div>
             </div>
-          </div>
-
-          <div className="card shadow-sm">
-            <div className="card-header d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2">
-              <div className="d-flex flex-column">
-                <span>{summaryText}</span>
-                {hasVisibleResults ? (
-                  <small className="text-muted">
-                    Showing {showingRangeStart}-{showingRangeEnd} · Page {page}
-                  </small>
+            <div>
+              <div className="d-flex justify-content-between align-items-center mb-2">
+                <h6 className="mb-0 text-uppercase text-muted" style={{ letterSpacing: '0.08em' }}>
+                  Filter by tag
+                </h6>
+                {selectedTags.length > 0 ? (
+                  <button
+                    type="button"
+                    className="btn btn-link btn-sm p-0"
+                    onClick={() => updateSearchParams({ tags: [], page: 1 })}
+                  >
+                    Clear tags
+                  </button>
                 ) : null}
               </div>
-              <div className="d-flex flex-column align-items-md-end">
-                {q ? <span className="text-muted small">Keyword: “{q}”</span> : null}
-                {selectedTags.length > 0 ? (
-                  <span className="text-muted small">
-                    Tags: {selectedTags.join(', ')}
+              <TagSelector
+                availableTags={availableTags}
+                value={selectedTags}
+                onChange={(next) => updateSearchParams({ tags: next, page: 1 })}
+                showCounts
+              />
+            </div>
+          </section>
+
+          <section className="snippet-feed">
+            <div className="snippet-feed__header">
+              <div className="snippet-feed__summary">{summaryText}</div>
+              <div className="snippet-feed__meta">
+                {hasVisibleResults ? (
+                  <span>
+                    Showing {showingRangeStart}-{showingRangeEnd} · Page {page}
                   </span>
                 ) : null}
+                {q ? <span>Keyword: “{q}”</span> : null}
+                {selectedTags.length > 0 ? <span>Tags: {selectedTags.join(', ')}</span> : null}
               </div>
-            <div className="list-group list-group-flush">
-              {error ? <div className="list-group-item text-danger">{error}</div> : null}
+            </div>
+
+            <div className="d-flex flex-column gap-3">
+              {error ? <div className="alert alert-danger mb-0">{error}</div> : null}
               {!error && loading && rows.length === 0 ? (
-                <div className="list-group-item">Loading…</div>
+                <div className="snippet-card text-muted">Loading feed…</div>
               ) : null}
               {!loading && !error && rows.length === 0 ? (
-                <div className="list-group-item text-muted">No snippets found. Try adjusting your filters.</div>
+                <div className="snippet-card text-muted">No snippets found. Try adjusting your filters.</div>
               ) : null}
               {!error && rows.length > 0
-                ? rows.map((r) => (
-                    <div key={r.id} className="list-group-item">
-                      <div className="d-flex w-100 justify-content-between align-items-start flex-wrap gap-2">
-                        <div>
-                          <h6 className="mb-1">
-                            <Link to={`/snippet/${r.id}`}>{r.book_name || 'Untitled'}</Link>
-                          </h6>
-                          <div className="text-muted small">
-                            {r.created_by_username ? <>by {r.created_by_username}</> : null}
-                            {r.created_by_username && (r.page_number != null || r.chapter || r.verse) ? ' · ' : ''}
-                            {r.page_number != null ? <>p. {r.page_number}</> : null}
-                            {r.chapter ? <>{r.page_number != null ? ' · ' : ''}ch. {r.chapter}</> : null}
-                            {r.verse ? <>{(r.page_number != null || r.chapter) ? ' · ' : ''}v. {r.verse}</> : null}
+                ? rows.map((r) => {
+                    const preview = (r.text_snippet || '').slice(0, 280)
+                    const showEllipsis = r.text_snippet && r.text_snippet.length > 280
+                    return (
+                      <article key={r.id} className="snippet-card">
+                        <div className="snippet-card__header">
+                          <div>
+                            <h3 className="snippet-card__title">
+                              <Link to={`/snippet/${r.id}`}>{r.book_name || 'Untitled'}</Link>
+                            </h3>
+                            <div className="snippet-card__meta">
+                              {r.created_by_username ? <span>by {r.created_by_username}</span> : null}
+                              {r.page_number != null ? <span>p. {r.page_number}</span> : null}
+                              {r.chapter ? <span>ch. {r.chapter}</span> : null}
+                              {r.verse ? <span>v. {r.verse}</span> : null}
+                            </div>
                           </div>
+                          <span className="snippet-card__timestamp">
+                            {new Date(r.created_utc).toLocaleString()}
+                          </span>
                         </div>
-                        <small className="text-muted">{new Date(r.created_utc).toLocaleString()}</small>
-                      </div>
-                      <div className="mt-2" style={{ whiteSpace: 'pre-line' }}>
-                        {(r.text_snippet || '').slice(0, 240)}
-                        {r.text_snippet && r.text_snippet.length > 240 ? '…' : ''}
-                      </div>
-                      {r.tags && r.tags.length > 0 ? (
-                        <div className="mt-3 d-flex flex-wrap gap-2">
-                          {r.tags.map((tag) => (
-                            <button
-                              key={tag.id}
-                              type="button"
-                              className="btn btn-sm btn-outline-secondary"
-                              onClick={() => handleAddTagFilter(tag.name)}
-                            >
-                              #{tag.name}
-                            </button>
-                          ))}
+                        <div className="snippet-card__body">
+                          {preview}
+                          {showEllipsis ? '…' : ''}
                         </div>
-                      ) : null}
-                    </div>
-                  ))
+                        {r.tags && r.tags.length > 0 ? (
+                          <div className="snippet-card__tags">
+                            {r.tags.map((tag) => (
+                              <button
+                                key={tag.id}
+                                type="button"
+                                className="snippet-card__tag"
+                                onClick={() => handleAddTagFilter(tag.name)}
+                              >
+                                #{tag.name}
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
+                      </article>
+                    )
+                  })
                 : null}
-                {loading && !error && rows.length > 0 ? (
-                <div className="list-group-item text-muted d-flex align-items-center gap-2">
+              {loading && !error && rows.length > 0 ? (
+                <div className="snippet-card text-muted d-flex align-items-center gap-2">
                   <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
                   <span>Updating results…</span>
                 </div>
               ) : null}
             </div>
+
             {!error && totalCount > 0 ? (
-              <div className="card-footer d-flex flex-column flex-md-row gap-3 justify-content-between align-items-md-center">
-                <small className="text-muted">
+              <div className="snippet-feed__footer">
+                <span>
                   {hasVisibleResults
-                    ? (
-                      <>Showing {showingRangeStart}-{showingRangeEnd} of {totalCount} snippet{totalCount === 1 ? '' : 's'}</>
-                    ) : (
-                      <>No snippets on this page. Total results: {totalCount}</>
-                    )}
-                </small>
-                <div className="d-flex align-items-center gap-2">
+                    ? `Showing ${showingRangeStart}-${showingRangeEnd} of ${totalCount} snippet${totalCount === 1 ? '' : 's'}`
+                    : `No snippets on this page. Total results: ${totalCount}`}
+                </span>
+                <div className="d-flex align-items-center gap-2 flex-wrap">
                   <button
                     type="button"
                     className="btn btn-outline-secondary btn-sm"
@@ -355,51 +388,48 @@ export default function List() {
                 </div>
               </div>
             ) : null}
-            </div>
-          </div>
+          </section>
         </div>
 
-        <div className="col-lg-4">
-          <div className="card shadow-sm mb-4">
-            <div className="card-header">Popular tags this week</div>
-            <div className="card-body">
-              {sidebarLoading ? (
-                <div>Loading…</div>
-              ) : sidebarError ? (
-                <div className="text-muted small">{sidebarError}</div>
-              ) : popularTags.length === 0 ? (
-                <div className="text-muted small">No trending tags yet.</div>
-              ) : (
-                <div className="d-flex flex-wrap gap-2">
-                  {popularTags.map((tag) => (
-                    <button
-                      key={tag.id}
-                      type="button"
-                      className="btn btn-sm btn-outline-secondary"
-                      onClick={() => handleAddTagFilter(tag.name)}
-                    >
-                      #{tag.name}
-                      {typeof tag.usage_count === 'number' ? (
-                        <span className="badge bg-light text-dark ms-1">{tag.usage_count}</span>
-                      ) : null}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
+        <aside className="sidebar-panel">
+          <div className="sidebar-card">
+            <h3 className="sidebar-card__title">Popular tags this week</h3>
+            {sidebarLoading ? (
+              <div>Loading…</div>
+            ) : sidebarError ? (
+              <div className="text-muted small">{sidebarError}</div>
+            ) : popularTags.length === 0 ? (
+              <div className="text-muted small">No trending tags yet.</div>
+            ) : (
+              <div className="popular-tag-list">
+                {popularTags.map((tag) => (
+                  <button
+                    key={tag.id}
+                    type="button"
+                    className="tag-chip tag-chip--outlined"
+                    onClick={() => handleAddTagFilter(tag.name)}
+                  >
+                    #{tag.name}
+                    {typeof tag.usage_count === 'number' ? (
+                      <span className="tag-chip__count">{tag.usage_count}</span>
+                    ) : null}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
-          <div className="card shadow-sm">
-            <div className="card-header">Popular this week</div>
-            <div className="list-group list-group-flush">
-              {sidebarLoading ? (
-                <div className="list-group-item">Loading…</div>
-              ) : trending.length === 0 ? (
-                <div className="list-group-item text-muted">No trending snippets yet.</div>
-              ) : (
-                trending.map((item) => (
-                  <div key={item.id} className="list-group-item">
-                    <div className="d-flex justify-content-between align-items-center">
+          <div className="sidebar-card">
+            <h3 className="sidebar-card__title">Popular this week</h3>
+            {sidebarLoading ? (
+              <div>Loading…</div>
+            ) : trending.length === 0 ? (
+              <div className="text-muted small">No trending snippets yet.</div>
+            ) : (
+              <div className="trending-list">
+                {trending.map((item) => (
+                  <div key={item.id} className="trending-item">
+                    <div className="d-flex justify-content-between align-items-center gap-2">
                       <Link to={`/snippet/${item.id}`} className="fw-semibold">
                         {item.book_name || 'Untitled'}
                       </Link>
@@ -407,16 +437,16 @@ export default function List() {
                         {item.recent_comment_count} comment{item.recent_comment_count === 1 ? '' : 's'}
                       </span>
                     </div>
-                    <div className="text-muted small mt-1">
+                    <div className="trending-item__meta">
                       {item.tag_count} tag{item.tag_count === 1 ? '' : 's'} · {item.lexeme_count} terms
                     </div>
                     {item.tags && item.tags.length ? (
-                      <div className="mt-2 d-flex flex-wrap gap-2">
+                      <div className="popular-tag-list">
                         {item.tags.slice(0, 4).map((tag) => (
                           <button
                             key={`${item.id}-${tag.id}`}
                             type="button"
-                            className="btn btn-sm btn-outline-secondary"
+                            className="tag-chip tag-chip--outlined"
                             onClick={() => handleAddTagFilter(tag.name)}
                           >
                             #{tag.name}
@@ -425,13 +455,12 @@ export default function List() {
                       </div>
                     ) : null}
                   </div>
-                ))
-              )}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
-        </div>
+        </aside>
       </div>
-    </>
-    
+    </div>
   )
 }

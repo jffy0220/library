@@ -9,19 +9,41 @@ import psycopg2.extras
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, EmailStr, Field, ConfigDict, constr
 
-import backend.main as main
-from backend.group_service import (
-    GROUP_PRIVACY_VALUES,
-    GROUP_ROLE_VALUES,
-    can_manage_membership,
-    can_update_group,
-    fetch_group,
-    fetch_group_members,
-    fetch_group_membership,
-    is_private_group,
-    is_site_admin,
-    is_site_moderator,
-)
+try:
+    import backend.main as main
+except ModuleNotFoundError as exc:
+    if exc.name != "backend":
+        raise
+    import main  # type: ignore[no-redef]
+
+try:
+    from backend.group_service import (
+        GROUP_PRIVACY_VALUES,
+        GROUP_ROLE_VALUES,
+        can_manage_membership,
+        can_update_group,
+        fetch_group,
+        fetch_group_members,
+        fetch_group_membership,
+        is_private_group,
+        is_site_admin,
+        is_site_moderator,
+    )
+except ModuleNotFoundError as exc:
+    if exc.name != "backend":
+        raise
+    from group_service import (  # type: ignore[no-redef]
+        GROUP_PRIVACY_VALUES,
+        GROUP_ROLE_VALUES,
+        can_manage_membership,
+        can_update_group,
+        fetch_group,
+        fetch_group_members,
+        fetch_group_membership,
+        is_private_group,
+        is_site_admin,
+        is_site_moderator,
+    )
 
 router = APIRouter(prefix="/api/groups", tags=["groups"])
 

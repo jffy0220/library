@@ -17,7 +17,7 @@ export default function Login() {
   }, [loading, user, navigate])
 
   if (loading) {
-    return <div className="container mt-5">Loading…</div>
+    return <div className="callout">Loading…</div>
   }
 
   const onSubmit = async (e) => {
@@ -35,51 +35,42 @@ export default function Login() {
   }
 
   return (
-    <div className="container mt-5">
-      <div className="row justify-content-center">
-        <div className="col-md-5 col-lg-4">
-          <div className="card shadow-sm">
-            <div className="card-body">
-              <h5 className="card-title text-center mb-4">Sign in</h5>
-              {error && <div className="alert alert-danger" role="alert">{error}</div>}
-              <form onSubmit={onSubmit}>
-                <div className="mb-3">
-                  <label className="form-label" htmlFor="username">Username or email</label>
-                  <input
-                    id="username"
-                    className="form-control"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    autoComplete="username"
-                    required
-                  />
-                </div>
-                <div className="mb-3">
-                  <label className="form-label" htmlFor="password">Password</label>
-                  <input
-                    id="password"
-                    type="password"
-                    className="form-control"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    autoComplete="current-password"
-                    required
-                  />
-                </div>
-                <button className="btn btn-primary w-100" type="submit" disabled={submitting}>
-                  {submitting ? 'Signing in…' : 'Sign in'}
-                </button>
-              </form>
-              <div className="mt-3 text-center">
-                <p className="mb-1">
-                  Need an account? <Link to="/register">Create one</Link>.
-                </p>
-                <p className="mb-0">
-                  Forgot password? <Link to="/forgot-password">Reset it</Link>.
-                </p>
-              </div>
-            </div>
+    <div className="auth-page">
+      <div className="auth-card">
+        <h1 className="auth-card__title">Welcome back</h1>
+        <p className="auth-card__subtitle">Sign in to share new snippets and keep the discussion going.</p>
+        {error && <div className="alert alert-danger" role="alert">{error}</div>}
+        <form onSubmit={onSubmit} className="d-flex flex-column gap-3">
+          <div>
+            <label className="form-label" htmlFor="username">Username or email</label>
+            <input
+              id="username"
+              className="form-control"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              autoComplete="username"
+              required
+            />
           </div>
+          <div>
+            <label className="form-label" htmlFor="password">Password</label>
+            <input
+              id="password"
+              type="password"
+              className="form-control"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+              required
+            />
+          </div>
+          <button className="btn btn-primary w-100" type="submit" disabled={submitting}>
+            {submitting ? 'Signing in…' : 'Sign in'}
+          </button>
+        </form>
+        <div className="auth-card__footer">
+          <p className="mb-1">Need an account? <Link to="/register">Create one</Link>.</p>
+          <p className="mb-0">Forgot password? <Link to="/forgot-password">Reset it</Link>.</p>
         </div>
       </div>
     </div>
