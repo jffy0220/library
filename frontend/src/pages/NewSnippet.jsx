@@ -3,6 +3,7 @@ import { createSnippet, listTags } from '../api'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth'
 import TagSelector from '../components/TagSelector'
+import GroupSelector from '../components/GroupSelector'
 
 export default function NewSnippet() {
   const nav = useNavigate()
@@ -21,6 +22,7 @@ export default function NewSnippet() {
   const [tags, setTags] = useState([])
   const [availableTags, setAvailableTags] = useState([])
   const [loadingTags, setLoadingTags] = useState(true)
+  const [groupId, setGroupId] = useState(null)
 
   const onChange = (e) => {
     const { name, value } = e.target
@@ -55,6 +57,7 @@ export default function NewSnippet() {
       text_snippet: form.text_snippet || null,
       thoughts: form.thoughts || null,
       tags,
+      group_id: groupId == null ? null : groupId
     }
     try {
       await createSnippet(payload)
@@ -83,6 +86,13 @@ export default function NewSnippet() {
               <label className="form-label">User</label>
               <input className="form-control" value={user?.username || ''} readOnly />
               <div className="form-text">Signed in user</div>
+            </div>
+            <div className="col-md-6">
+              <GroupSelector
+                value={groupId}
+                onChange={setGroupId}
+                helperText="Choose a group to limit visibility to invited members."
+              />
             </div>
             <div className="col-md-3">
               <label className="form-label">Page number</label>

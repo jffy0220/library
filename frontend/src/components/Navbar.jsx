@@ -1,6 +1,7 @@
 import React from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth'
+import { hasGroupAccess } from '../features'
 
 export default function Navbar() {
   const navigate = useNavigate()
@@ -22,6 +23,9 @@ export default function Navbar() {
         <div className="d-flex align-items-center gap-2">
           {user ? (
             <>
+              <Link className="btn btn-sm btn-outline-light" to="/groups" data-testid="nav-groups" title={canAccessGroups ? 'Explore your groups' : 'Upgrade for group collaboration'}>
+                Groups{canAccessGroups ? '' : ' 🔒'}
+              </Link>
               <Link className="btn btn-sm btn-primary" to="/new">New</Link>
               {isModerator && (
                 <Link className="btn btn-sm btn-outline-info" to="/moderation">

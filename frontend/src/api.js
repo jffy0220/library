@@ -135,6 +135,90 @@ export async function resolveModerationReport(reportId, payload) {
   return data
 }
 
+export async function discoverGroups(params = {}) {
+  const query = new URLSearchParams()
+  if (params.q) query.set('q', params.q)
+  if (params.visibility) query.set('visibility', params.visibility)
+  if (params.limit) query.set('limit', params.limit)
+  if (params.page) query.set('page', params.page)
+  const config = [...query.keys()].length > 0 ? { params: query } : undefined
+  try {
+    const { data } = await api.get('/groups', config)
+    return data
+  } catch (err) {
+    if (err?.response?.status === 404) {
+      const { data } = await api.get('/groups/discover', config)
+      return data
+    }
+    throw err
+  }
+}
+
+export async function getGroup(groupId) {
+  const { data } = await api.get(`/groups/${groupId}`)
+  return data
+}
+
+export async function getGroupBySlug(slug) {
+  const { data } = await api.get(`/groups/slug/${slug}`)
+  return data
+}
+
+export async function listMyGroupMemberships() {
+  try {
+    const { data } = await api.get('/groups/memberships')
+    return data
+  } catch (err) {
+    if (err?.response?.status === 404) {
+      // Some API versions expose the collection under /groups/me
+      const { data } = await api.get('/groups/me')
+      return data
+    }
+    throw err
+  }
+}
+
+export async function listGroupMembers(groupId) {
+  const { data } = await api.get(`/groups/${groupId}/members`)
+  return data
+}
+
+export async function listGroupSnippets(groupId, params = {}) {
+  const query = {}
+  if (params.limit) query.limit = params.limit
+  if (params.page) query.page = params.page
+  const { data } = await api.get(`/groups/${groupId}/snippets`, { params: query })
+  return data
+}
+
+export async function updateGroupMember(groupId, userId, payload) {
+  const { data } = await api.put(`/groups/${groupId}/members/${userId}`, payload)
+  return data
+}
+
+export async function removeGroupMember(groupId, userId) {
+  const { data } = await api.delete(`/groups/${groupId}/members/${userId}`)
+  return data
+}
+
+export async function listGroupInvites(groupId, params = {}) {
+  const query = {}
+  if (params.status) query.status = params.status
+  if (params.limit) query.limit = params.limit
+  const { data } = await api.get(`/groups/${groupId}/invites`, { params: query })
+  return data
+}
+
+export async function createGroupInvite(groupId, payload) {
+  const { data } = await api.post(`/groups/${groupId}/invites`, payload)
+  return data
+}
+
+export async function acceptGroupInvite(inviteCode) {
+  const { data } = await api.post(`/groups/invites/${inviteCode}/accept`)
+  return data
+}
+
 export async function register(payload) {
   const { data } = await api.post('/auth/register', payload)
   return data

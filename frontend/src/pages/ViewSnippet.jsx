@@ -12,9 +12,11 @@ import {
   reportSnippet,
   reportComment,
   listTags,
+  getGroup,
 } from '../api'
 import { useAuth } from '../auth'
 import TagSelector from '../components/TagSelector'
+import GroupSelector from '../components/GroupSelector'
 
 const makeEmptySnippetForm = () => ({
   date_read: '',
@@ -48,6 +50,8 @@ export default function ViewSnippet() {
   const [snippetTags, setSnippetTags] = useState([])
   const [availableTags, setAvailableTags] = useState([])
   const [tagsLoading, setTagsLoading] = useState(true)
+  const [snippetGroupId, setSnippetGroupId] = useState(null)
+  const [groupDetail, setGroupDetail] = useState(null)
 
   const [showSnippetReport, setShowSnippetReport] = useState(false)
   const [snippetReportReason, setSnippetReportReason] = useState('')
@@ -130,6 +134,40 @@ export default function ViewSnippet() {
     }
   }, [])
 
+  useEffect(() => {
+    if (!row) {
+      setSnippetGroupId(null)
+      return
+    }
+    if (!editingSnippet) {
+      setSnippetGroupId(row.group_id ?? row.groupId ?? null)
+    }
+  }, [row, editingSnippet])
+
+  useEffect(() => {
+    let ignore = false
+    if (!row?.group_id) {
+      setGroupDetail(null)
+      return () => {}
+    }
+    ;(async () => {
+      try {
+        const detail = await getGroup(row.group_id)
+        if (!ignore) setGroupDetail(detail)
+      } catch (err) {
+        if (!ignore) {
+          if (err?.response?.status !== 404) {
+            console.warn('Failed to load group detail', err)
+          }
+          setGroupDetail(null)
+        }
+      }
+    })()
+    return () => {
+      ignore = true
+    }
+  }, [row?.group_id])
+
   const handleCommentSubmit = async (event) => {
     event.preventDefault()
     if (!user) {
@@ -194,6 +232,7 @@ export default function ViewSnippet() {
       thoughts: row.thoughts || '',
     })
     setSnippetTags((row.tags || []).map((tag) => tag.name))
+    setSnippetGroupId(row.group_id ?? row.groupId ?? null)
     setEditingSnippet(true)
   }
 
@@ -207,6 +246,11 @@ export default function ViewSnippet() {
     setSnippetForm(makeEmptySnippetForm())
     setSnippetSaving(false)
     setSnippetTags([])
+    if (row) {
+      setSnippetGroupId(row.group_id ?? row.groupId ?? null)
+    } else {
+      setSnippetGroupId(null)
+    }
   }
 
   const handleSnippetEditSubmit = async (event) => {
@@ -234,12 +278,14 @@ export default function ViewSnippet() {
       text_snippet: snippetForm.text_snippet || null,
       thoughts: snippetForm.thoughts || null,
       tags: snippetTags,
+      group_id: snippetGroupId == null ? null : snippetGroupId,
     }
 
     setSnippetSaving(true)
     try {
       const updated = await updateSnippet(row.id, payload)
       setRow(updated)
+      setSnippetGroupId(updated.group_id ?? updated.groupId ?? null)
       setSnippetAlert({ type: 'success', message: 'Snippet updated.' })
       setEditingSnippet(false)
       setSnippetForm(makeEmptySnippetForm())
@@ -473,6 +519,13 @@ export default function ViewSnippet() {
                 <label className="form-label">Author</label>
                 <input className="form-control" value={row.created_by_username || ''} readOnly />
               </div>
+              <div className="col-md-6">
+                <GroupSelector
+                  value={snippetGroupId}
+                  onChange={setSnippetGroupId}
+                  helperText="Switching groups updates who can view this snippet."
+                />
+              </div>
               <div className="col-md-3">
                 <label className="form-label">Page number</label>
                 <input
@@ -565,6 +618,28 @@ export default function ViewSnippet() {
               <label className="form-label">Author</label>
               <input className="form-control" value={row.created_by_username || ''} readOnly />
             </div>
+            {(row.group_id || groupDetail) && (
+              <div className="col-md-6">
+                <label className="form-label">Group</label>
+                <input
+                  className="form-control"
+                  value={groupDetail?.name ? `${groupDetail.name}` : `Group #${row.group_id}`}
+                  readOnly
+                />
+                <div className="form-text">
+                  {(() => {
+                    const privacyValue = (groupDetail?.privacy_state || groupDetail?.privacyState || 'private').toLowerCase()
+                    if (privacyValue === 'private') {
+                      return 'Only members of this private group can view the snippet.'
+                    }
+                    if (privacyValue === 'unlisted') {
+                      return 'This group is unlisted. Share the link directly with collaborators.'
+                    }
+                    return 'Shared in a public group visible to signed-in members.'
+                  })()}
+                </div>
+              </div>
+            )}
             <div className="col-md-3">
               <label className="form-label">Page number</label>
               <input className="form-control" value={row.page_number ?? ''} readOnly />

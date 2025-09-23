@@ -8,6 +8,11 @@ import Login from './pages/Login'
 import Register from './pages/Register'
 import ForgotPassword from './pages/ForgotPassword'
 import ModerationDashboard from './pages/ModerationDashboard'
+import GroupDiscover from './pages/Groups/GroupDiscover'
+import GroupFeed from './pages/Groups/GroupFeed'
+import GroupManage from './pages/Groups/GroupManage'
+import GroupInviteAccept from './pages/Groups/GroupInviteAccept'
+import GroupsLayout from './pages/Groups/GroupsLayout'
 import { AuthProvider, useAuth } from './auth'
 
 function RequireAuth() {
@@ -66,6 +71,13 @@ export default function App() {
             <Route path="/snippet/:id" element={<ViewSnippet />} />
             <Route element={<RequireAuth />}>
               <Route path="/new" element={<NewSnippet />} />
+              <Route path="/groups" element={<GroupsLayout />}>
+                <Route index element={<GroupDiscover />} />
+                <Route path="discover" element={<GroupDiscover />} />
+                <Route path="invite/:inviteCode" element={<GroupInviteAccept />} />
+                <Route path=":groupSlug" element={<GroupFeed />} />
+                <Route path=":groupSlug/manage" element={<GroupManage />} />
+              </Route>
             </Route>
             <Route element={<RequireModerator />}>
               <Route path="/moderation" element={<ModerationDashboard />} />
