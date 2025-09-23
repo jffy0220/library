@@ -20,7 +20,7 @@ def _patched_version(distribution_name: str) -> str:
 
 importlib.metadata.version = _patched_version  # type: ignore[assignment]
 
-from backend.email.providers import (
+from backend.email_service.providers import (
     EmailProvider,
     SMTPProvider,
     SendGridProvider,

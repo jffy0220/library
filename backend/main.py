@@ -25,7 +25,7 @@ from passlib.hash import bcrypt
 import logging
 import time
 
-from backend.email.providers import (
+from backend.email_service.providers import (
     EmailProvider,
     EmailConfig,
     create_email_provider,
