@@ -757,18 +757,72 @@ a:focus {
 .form-control,
 .form-select,
 textarea.form-control {
-  background: rgba(15, 23, 42, 0.92);
-  border: 1px solid rgba(148, 163, 184, 0.28);
+  background: rgba(15, 23, 42, 0.88);
+  border: 1px solid rgba(148, 163, 184, 0.32);
   border-radius: var(--app-radius-sm);
-  color: var(--app-text);
+  color: #f8fafc;
   padding: 0.6rem 0.75rem;
+  caret-color: var(--app-primary-accent);
+  transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease;
+}
+
+.form-control::placeholder,
+textarea.form-control::placeholder {
+  color: rgba(226, 232, 240, 0.55);
 }
 
 .form-control:focus,
 .form-select:focus,
 textarea.form-control:focus {
-  border-color: rgba(99, 102, 241, 0.55);
+  background: rgba(30, 41, 59, 0.95);
+  border-color: rgba(99, 102, 241, 0.6);
   box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.18);
+  color: #f8fafc;
+}
+
+input:-webkit-autofill,
+textarea:-webkit-autofill,
+select:-webkit-autofill {
+  -webkit-text-fill-color: #f8fafc;
+  transition: background-color 600000s 0s, color 600000s 0s;
+}
+
+input:-webkit-autofill:focus,
+textarea:-webkit-autofill:focus,
+select:-webkit-autofill:focus {
+  -webkit-text-fill-color: #f8fafc;
+}
+
+.input-group {
+  background: rgba(15, 23, 42, 0.9);
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: var(--app-radius-sm);
+  overflow: hidden;
+}
+
+.input-group > .form-control,
+.input-group > .form-select {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  color: #f8fafc;
+}
+
+.input-group > .form-control:focus,
+.input-group > .form-select:focus {
+  box-shadow: none;
+}
+
+.input-group .btn-outline-secondary {
+  border: none;
+  background: rgba(148, 163, 184, 0.16);
+  color: var(--app-text);
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.input-group .btn-outline-secondary:hover,
+.input-group .btn-outline-secondary:focus {
+  background: rgba(99, 102, 241, 0.32);
   color: #f8fafc;
 }
 
