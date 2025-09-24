@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import Enum
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 class NotificationType(str, Enum):
@@ -57,7 +57,14 @@ class NotificationListResponse(BaseModel):
 
 
 class NotificationMarkReadRequest(BaseModel):
-    notification_ids: List[int] = Field(min_length=1, alias="notificationIds")
+    ids: List[int] = Field(min_length=1, validation_alias=AliasChoices("ids", "notificationIds"))
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class NotificationMarkReadResponse(BaseModel):
+    updated_ids: List[int] = Field(default_factory=list, alias="updatedIds")
+    unread_count: int = Field(alias="unreadCount")
 
     model_config = ConfigDict(populate_by_name=True)
 

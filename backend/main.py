@@ -947,6 +947,8 @@ def create_report_for_content(content_type: str, content_id: int, reporter: User
         raise HTTPException(status_code=500, detail="Unable to load report")
     return report
 
+from backend.app.routes.notifications import router as notifications_router
+
 app = FastAPI(title="Book Snippets API")
 
 # Vite proxy origin
@@ -957,6 +959,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(notifications_router)
 
 @app.post("/api/auth/register", response_model=RegisterResponse, status_code=status.HTTP_201_CREATED)
 def register(payload: RegisterRequest, background_tasks: BackgroundTasks):
