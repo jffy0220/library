@@ -51,11 +51,9 @@ export default function GroupSelector({ value, onChange, disabled = false, helpe
       } catch (err) {
         if (!ignore) {
           if (err?.response?.status === 403) {
-            setError('Group collaboration is limited to premium library plans.')
-          } else {
             console.error('Failed to load group memberships', err)
-            setError('Unable to load your group memberships.')
           }
+          setError('Unable to load your group memeberships')
           setGroups([])
         }
       } finally {
@@ -75,15 +73,12 @@ export default function GroupSelector({ value, onChange, disabled = false, helpe
 
   const visibilityMessage = useMemo(() => {
     if (selectedGroup) {
-      if (selectedGroup.privacy === 'private') {
-        return 'Only members of this group will see the snippet and its discussion.'
-      }
       if (selectedGroup.privacy === 'unlisted') {
-        return 'Unlisted groups stay off discovery pages. Share the direct link with collaborators.'
+        return 'Unlisted groups stay off discovery pages. Only members can view the shared snippets.'
       }
-      return 'Posts to public groups are visible to any signed-in library member.'
+      return 'Only members of this group will be able to view the snippet and its discussion.'
     }
-    return 'Snippets without a group are visible to the entire community.'
+    return 'Snippets without a group are visible to the entire community unless you mark them private.'
   }, [selectedGroup])
 
   const handleChange = (event) => {

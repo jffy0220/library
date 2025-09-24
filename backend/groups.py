@@ -25,6 +25,7 @@ try:
         fetch_group,
         fetch_group_members,
         fetch_group_membership,
+        is_invite_only_group,
         is_private_group,
         is_site_admin,
         is_site_moderator,
@@ -40,6 +41,7 @@ except ModuleNotFoundError as exc:
         fetch_group,
         fetch_group_members,
         fetch_group_membership,
+        is_invite_only_group,
         is_private_group,
         is_site_admin,
         is_site_moderator,
@@ -56,12 +58,16 @@ class GroupCreate(BaseModel):
     name: constr(strip_whitespace=True, min_length=1, max_length=255)
     description: Optional[str] = None
     privacy_state: Optional[str] = Field(default="public")
+    invite_only: Optional[bool] = Field(default=False, alias="inviteOnly")
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class GroupUpdate(BaseModel):
     name: Optional[constr(strip_whitespace=True, min_length=1, max_length=255)] = None
     description: Optional[str] = None
     privacy_state: Optional[str] = None
+    invite_only: Optional[bool] = Field(default=None, alias="inviteOnly")
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class GroupOut(BaseModel):
@@ -70,8 +76,11 @@ class GroupOut(BaseModel):
     name: str
     description: Optional[str]
     privacy_state: str
+    invite_only: bool = Field(alias="inviteOnly")
     created_by_user_id: Optional[int]
     created_utc: datetime
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class GroupMemberOut(BaseModel):
@@ -156,15 +165,16 @@ def _ensure_group_visibility(
     viewer: Optional[main.UserOut],
     membership: Optional[Dict[str, Any]],
 ) -> None:
-    if not is_private_group(group):
-        return
     if viewer and is_site_moderator(viewer):
         return
     if membership:
         return
+    viewer_id = getattr(viewer, "id", None)
+    if viewer_id and group.get("created_by_user_id") == viewer_id:
+        return
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
-        detail="Membership required to view this private group",
+        detail="Membership required to view this group",
     )
 
 
@@ -191,24 +201,22 @@ def _generate_invite_code() -> str:
 
 @router.post("/", response_model=GroupOut, status_code=status.HTTP_201_CREATED)
 def create_group(payload: GroupCreate, current_user: main.UserOut = Depends(main.get_current_user)):
-    if not is_site_moderator(current_user):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to create groups")
-
     slug = payload.slug.strip().lower()
     name = payload.name.strip()
     description = payload.description.strip() if payload.description else None
     privacy_state = _normalize_privacy_state(payload.privacy_state)
+    invite_only = bool(payload.invite_only)
 
     with main.get_conn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
             try:
                 cur.execute(
                     """
-                    INSERT INTO groups (slug, name, description, privacy_state, created_by_user_id)
-                    VALUES (%s, %s, %s, %s, %s)
-                    RETURNING id, slug, name, description, privacy_state, created_by_user_id, created_utc
+                    INSERT INTO groups (slug, name, description, privacy_state, invite_only, created_by_user_id)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    RETURNING id, slug, name, description, privacy_state, invite_only, created_by_user_id, created_utc
                     """,
-                    (slug, name, description, privacy_state, current_user.id),
+                    (slug, name, description, privacy_state, invite_only, current_user.id),
                 )
             except psycopg2.errors.UniqueViolation:
                 conn.rollback()
@@ -246,6 +254,8 @@ def update_group(
         updates["description"] = payload.description.strip() or None
     if payload.privacy_state is not None:
         updates["privacy_state"] = _normalize_privacy_state(payload.privacy_state)
+    if payload.invite_only is not None:
+        updates["invite_only"] = bool(payload.invite_only)
 
     if not updates:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No changes provided")
@@ -261,7 +271,7 @@ def update_group(
         values = list(updates.values())
         with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
             cur.execute(
-                f"UPDATE groups SET {set_clause} WHERE id = %s RETURNING id, slug, name, description, privacy_state, created_by_user_id, created_utc",
+                f"UPDATE groups SET {set_clause} WHERE id = %s RETURNING id, slug, name, description, privacy_state, invite_only, created_by_user_id, created_utc",
                 (*values, group_id),
             )
             row = cur.fetchone()
@@ -375,6 +385,49 @@ def remove_group_member(
             conn.commit()
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+@router.post("/{group_id}/join", response_model=GroupMemberOut)
+def join_group(
+    group_id: int,
+    current_user: main.UserOut = Depends(main.get_current_user),
+):
+    with main.get_conn() as conn:
+        group = _ensure_group(conn, group_id)
+        existing_membership = fetch_group_membership(conn, group_id, current_user.id)
+        if existing_membership:
+            detail = _load_member_detail(conn, group_id, current_user.id)
+            if detail is None:
+                detail = {
+                    "group_id": group_id,
+                    "user_id": current_user.id,
+                    "role": existing_membership["role"],
+                    "joined_utc": existing_membership.get("joined_utc", datetime.utcnow()),
+                    "username": current_user.username,
+                }
+            return GroupMemberOut(**_coerce_member(detail))
+
+        if is_invite_only_group(group):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This group can only be joined by invitation",
+            )
+
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO group_memberships (group_id, user_id, role, added_by_user_id)
+                VALUES (%s, %s, 'member', %s)
+                ON CONFLICT (group_id, user_id) DO NOTHING
+                """,
+                (group_id, current_user.id, current_user.id),
+            )
+            conn.commit()
+
+        detail = _load_member_detail(conn, group_id, current_user.id)
+        if detail is None:
+            raise HTTPException(status_code=500, detail="Unable to load membership")
+
+    return GroupMemberOut(**_coerce_member(detail))
 
 
 @router.post("/{group_id}/invites", response_model=InviteOut, status_code=status.HTTP_201_CREATED)
@@ -552,7 +605,7 @@ def list_group_snippets(
             cur.execute(
                 """
                 SELECT s.id, s.created_utc, s.date_read, s.book_name, s.page_number, s.chapter, s.verse,
-                       s.text_snippet, s.thoughts, s.created_by_user_id, s.group_id,
+                       s.text_snippet, s.thoughts, s.created_by_user_id, s.group_id, s.visibility,
                        u.username AS created_by_username
                 FROM snippets s
                 LEFT JOIN users u ON u.id = s.created_by_user_id

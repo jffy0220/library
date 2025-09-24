@@ -307,6 +307,8 @@ export default function List() {
                 ? rows.map((r) => {
                     const preview = (r.text_snippet || '').slice(0, 280)
                     const showEllipsis = r.text_snippet && r.text_snippet.length > 280
+                    const visibility = (r.visibility || '').toLowerCase()
+                    const isPrivate = visibility === 'private'
                     return (
                       <article key={r.id} className="snippet-card">
                         <div className="snippet-card__header">
@@ -319,6 +321,9 @@ export default function List() {
                               {r.page_number != null ? <span>p. {r.page_number}</span> : null}
                               {r.chapter ? <span>ch. {r.chapter}</span> : null}
                               {r.verse ? <span>v. {r.verse}</span> : null}
+                              {isPrivate ? (
+                                <span className="badge text-bg-warning ms-2">Private</span>
+                              ) : null}
                             </div>
                           </div>
                           <span className="snippet-card__timestamp">

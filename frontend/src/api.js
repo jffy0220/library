@@ -191,6 +191,11 @@ export async function listGroupSnippets(groupId, params = {}) {
   return data
 }
 
+export async function joinGroup(groupId) {
+  const { data } = await api.post(`/groups/${groupId}/join`)
+  return data
+}
+
 export async function updateGroupMember(groupId, userId, payload) {
   const { data } = await api.put(`/groups/${groupId}/members/${userId}`, payload)
   return data

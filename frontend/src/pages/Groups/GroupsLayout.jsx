@@ -15,7 +15,7 @@ export default function GroupsLayout() {
     )
   }
 
-  if (!hasGroupAccess(user)) {
+  if (!user) {
     return <GroupsAccessGate />
   }
 

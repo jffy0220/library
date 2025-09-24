@@ -1,5 +1,3 @@
-const PREMIUM_GROUP_TIERS = new Set(['plus', 'pro', 'premium', 'enterprise'])
-
 const normalizeValue = (value) => {
   if (!value) return null
   if (typeof value === 'string') return value.trim().toLowerCase()
@@ -24,16 +22,5 @@ export function getSubscriptionTier(user) {
 }
 
 export function hasGroupAccess(user) {
-  if (!user) return false
-  const siteRole = normalizeValue(user.role)
-  if (siteRole && (siteRole === 'moderator' || siteRole === 'admin')) {
-    return true
-  }
-  const entitlements = user.entitlements || user.features || user.featureFlags || {}
-  if (typeof entitlements === 'object') {
-    const directFlag = entitlements.groups ?? entitlements.groupAccess
-    if (directFlag === true) return true
-  }
-  const tier = getSubscriptionTier(user)
-  return PREMIUM_GROUP_TIERS.has(tier)
+  return !!user
 }

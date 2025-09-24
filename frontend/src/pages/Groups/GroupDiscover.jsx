@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { discoverGroups } from '../../api'
 
 const PRIVACY_DESCRIPTIONS = {
-  public: 'Visible to everyone in the library.',
+  public: 'Disccoverable by everyone in the library. Join to see member posts',
   unlisted: 'Hidden from discovery, but accessible to anyone with the link.',
   private: 'Only members can view posts and discussions.',
 }
@@ -109,13 +109,21 @@ export default function GroupDiscover() {
           {groups.map((group) => {
             const privacy = normalizePrivacy(group.privacy_state || group.privacyState)
             const slug = group.slug || String(group.id)
+            const inviteOnly = Boolean(group.invite_only ?? group.inviteOnly)
             return (
               <div className="col-md-6" key={`${group.id}-${slug}`}>
                 <div className="card h-100 shadow-sm">
                   <div className="card-body d-flex flex-column">
                     <div className="d-flex justify-content-between align-items-start mb-2">
                       <h3 className="h5 mb-0">{group.name}</h3>
-                      <GroupPrivacyBadge privacy={privacy} />
+                      <div className="d-flex align-items-center gap-2">
+                        <GroupPrivacyBadge privacy={privacy} />
+                        {inviteOnly && (
+                          <span className="badge text-bg-warning" title="Invitation required to join">
+                            Invite only
+                          </span>
+                        )}
+                      </div>
                     </div>
                     {group.description && <p className="flex-grow-1 text-muted">{group.description}</p>}
                     <p className="text-muted small mb-3">

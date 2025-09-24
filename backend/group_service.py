@@ -20,6 +20,7 @@ class GroupRecord:
     name: str
     description: Optional[str]
     privacy_state: str
+    invite_only: bool
     created_by_user_id: Optional[int]
     created_utc: Any
 
@@ -46,7 +47,7 @@ def fetch_group(conn, *, group_id: Optional[int] = None, slug: Optional[str] = N
         params.append(slug)
 
     query = (
-        "SELECT id, slug, name, description, privacy_state, created_by_user_id, created_utc "
+        "SELECT id, slug, name, description, privacy_state, invite_only, created_by_user_id, created_utc "
         "FROM groups WHERE " + " OR ".join(clauses) + " LIMIT 1"
     )
 
@@ -90,6 +91,8 @@ def fetch_group_members(conn, group_id: int) -> List[Dict[str, Any]]:
 def is_private_group(group: Dict[str, Any]) -> bool:
     return group.get("privacy_state") == "private"
 
+def is_invite_only_group(group: Dict[str, Any]) -> bool:
+    return bool(group.get("invite_only"))
 
 def is_site_moderator(user: Any) -> bool:
     return getattr(user, "role", None) in SITE_MODERATOR_ROLES

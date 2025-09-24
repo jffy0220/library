@@ -93,6 +93,7 @@ PASSWORD_RESET_TOKEN_TTL = timedelta(minutes=PASSWORD_RESET_TOKEN_TTL_MINUTES)
 
 TRENDING_REFRESH_WARN_SECONDS = float(os.getenv("TRENDING_REFRESH_WARN_SECONDS", "5.0"))
 TRENDING_REFRESH_MAX_ERROR_LENGTH = int(os.getenv("TRENDING_REFRESH_MAX_ERROR_LENGTH", "1024"))
+SNIPPET_VISIBILITY_VALUES = {"public", "private"}
 
 _refresh_metrics_lock = Lock()
 _refresh_metrics: Dict[str, Any] = {
@@ -337,6 +338,7 @@ class SnippetBase(BaseModel):
     text_snippet: Optional[str] = None
     thoughts: Optional[str] = None
     tags: Optional[List[str]] = None
+    visibility: Optional[str] = Field(default="public")
 
 class TagOut(BaseModel):
     id: int
@@ -359,6 +361,7 @@ class SnippetUpdate(BaseModel):
     text_snippet: Optional[str] = None
     thoughts: Optional[str] = None
     tags: Optional[List[str]] = None
+    visibility: Optional[str] = None
 
 class SnippetOut(SnippetBase):
     id: int
@@ -367,6 +370,7 @@ class SnippetOut(SnippetBase):
     created_by_username: Optional[str]
     group_id: Optional[int] = None
     tags: List[TagOut] = Field(default_factory=list)
+    visibility: str = Field(default="public")
 
 
 class SnippetWithStats(SnippetOut):
@@ -409,6 +413,12 @@ def normalize_tag_inputs(raw_tags: Optional[List[str]]) -> List[Tuple[str, str]]
             continue
         seen.add(slug)
         normalized.append((name, slug))
+    return normalized
+
+def normalize_snippet_visibility(value: Optional[str]) -> str:
+    normalized = (value or "public").strip().lower()
+    if normalized not in SNIPPET_VISIBILITY_VALUES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid visibility setting")
     return normalized
 
 
@@ -672,7 +682,7 @@ def fetch_snippet(snippet_id: int) -> Optional[SnippetOut]:
             cur.execute(
                 """
                 SELECT s.id, s.created_utc, s.date_read, s.book_name, s.page_number, s.chapter, s.verse,
-                       s.text_snippet, s.thoughts, s.created_by_user_id, s.group_id,
+                       s.text_snippet, s.thoughts, s.created_by_user_id, s.group_id, s.visibility,
                        u.username AS created_by_username
                 FROM snippets s
                 LEFT JOIN users u ON u.id = s.created_by_user_id
@@ -687,6 +697,43 @@ def fetch_snippet(snippet_id: int) -> Optional[SnippetOut]:
         tag_map = fetch_tags_for_snippets(conn, [snippet.id])
         snippet.tags = tag_map.get(snippet.id, [])
     return snippet
+
+def ensure_snippet_visibility(snippet: SnippetOut, viewer: Optional[UserOut], conn: Optional[Any] = None) -> None:
+    viewer_id = getattr(viewer, "id", None)
+    if snippet.visibility != "public" and snippet.created_by_user_id != viewer_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This snippet is private")
+
+    group_id = snippet.group_id
+    if group_id is None:
+        return
+
+    if viewer and (snippet.created_by_user_id == viewer.id or is_moderator(viewer)):
+        return
+
+    if viewer_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Membership required to view this group snippet",
+        )
+
+    should_close = False
+    connection = conn
+    if connection is None:
+        connection = get_conn()
+        should_close = True
+    try:
+        membership = fetch_group_membership(connection, group_id, viewer_id)
+    finally:
+        if should_close:
+            connection.close()
+
+    if membership:
+        return
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Membership required to view this group snippet",
+    )
 
 def fetch_comment(comment_id: int, user_id: int) -> Optional[CommentOut]:
     with get_conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
@@ -969,7 +1016,8 @@ def list_snippets(
     tags_multi: Optional[List[str]] = Query(None, alias="tag", description="Repeatable tag filters"),
     sort: str = Query("recent", description="Sort order: recent, trending, or relevance"),
     limit: int = Query(50, ge=1, le=200),
-    page: int = Query(1, ge=1, description="1-based page number for pagination")
+    page: int = Query(1, ge=1, description="1-based page number for pagination"),
+    current_user: Optional[UserOut] = Depends(get_optional_current_user),
 ):
     sort_key = sort.lower().strip()
     allowed_sorts = {"recent", "trending", "relevance"}
@@ -989,6 +1037,8 @@ def list_snippets(
     tag_slugs = [slug for _, slug in normalized_tags]
 
     ts_vector = "to_tsvector('english', coalesce(s.text_snippet,'') || ' ' || coalesce(s.thoughts,''))"
+    viewer_id = current_user.id if current_user else None
+    viewer_is_moderator = bool(current_user and is_moderator(current_user))
 
     with get_conn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
@@ -1004,6 +1054,7 @@ def list_snippets(
                 "s.thoughts",
                 "s.created_by_user_id",
                 "s.group_id",
+                "s.visibility",
                 "u.username AS created_by_username",
             ]
             joins = ["LEFT JOIN users u ON u.id = s.created_by_user_id"]
@@ -1031,6 +1082,24 @@ def list_snippets(
                 )
                 params.append(tag_slugs)
                 params.append(len(tag_slugs))
+
+            if viewer_id is None:
+                where_clauses.append("s.visibility = 'public'")
+            else:
+                where_clauses.append("(s.visibility = 'public' OR s.created_by_user_id = %s)")
+                params.append(viewer_id)
+
+            if viewer_is_moderator:
+                pass
+            elif viewer_id is None:
+                where_clauses.append("s.group_id IS NULL")
+            else:
+                where_clauses.append(
+                    "(s.group_id IS NULL OR s.created_by_user_id = %s OR EXISTS ("
+                    "SELECT 1 FROM group_memberships gm WHERE gm.group_id = s.group_id AND gm.user_id = %s"
+                    "))"
+                )
+                params.extend([viewer_id, viewer_id])
 
             order_clause = "s.created_utc DESC"
             if sort_key == "trending":
@@ -1097,7 +1166,7 @@ def list_trending_snippets(limit: int = Query(6, ge=1, le=50)):
             cur.execute(
                 """
                 SELECT s.id, s.created_utc, s.date_read, s.book_name, s.page_number, s.chapter, s.verse,
-                       s.text_snippet, s.thoughts, s.created_by_user_id, s.group_id,
+                       s.text_snippet, s.thoughts, s.created_by_user_id, s.group_id, s.visibility,
                        u.username AS created_by_username,
                        COALESCE(tsa.recent_comment_count, 0) AS recent_comment_count,
                        COALESCE(tsa.tag_count, 0) AS tag_count,
@@ -1105,6 +1174,7 @@ def list_trending_snippets(limit: int = Query(6, ge=1, le=50)):
                 FROM trending_snippet_activity tsa
                 JOIN snippets s ON s.id = tsa.snippet_id
                 LEFT JOIN users u ON u.id = s.created_by_user_id
+                WHERE s.visibility = 'public' AND s.group_id IS NULL
                 ORDER BY tsa.recent_comment_count DESC, tsa.tag_count DESC, tsa.lexeme_count DESC, s.created_utc DESC
                 LIMIT %s
                 """,
@@ -1165,25 +1235,33 @@ def create_snippet(
     background_tasks: BackgroundTasks,
     current_user: UserOut = Depends(get_current_user),
 ):
+    visibility = normalize_snippet_visibility(payload.visibility)
+    group_id = payload.group_id
+
     with get_conn() as conn:
-        target_group = None
-        if payload.group_id is not None:
-            target_group = fetch_group(conn, group_id=payload.group_id)
+        if group_id is not None:
+            target_group = fetch_group(conn, group_id=group_id)
             if target_group is None:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Group not found")
-            membership = fetch_group_membership(conn, payload.group_id, current_user.id)
-            if is_private_group(target_group) and not (membership or is_moderator(current_user)):
+            membership = fetch_group_membership(conn, group_id, current_user.id)
+            if not membership and not is_moderator(current_user):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Membership required to post in this private group",
+                    detail="Membership required to post in this group",
                 )
+            if visibility != "public":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Private snippets cannot be shared with a group",
+                )
+
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO snippets (date_read, book_name, page_number, chapter, verse, text_snippet, thoughts, group_id, created_by_user_id)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO snippets (date_read, book_name, page_number, chapter, verse, text_snippet, thoughts, group_id, visibility, created_by_user_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
-            """,
+                """,
                 (
                     payload.date_read,
                     payload.book_name,
@@ -1192,6 +1270,8 @@ def create_snippet(
                     payload.verse,
                     payload.text_snippet,
                     payload.thoughts,
+                    group_id,
+                    visibility,
                     current_user.id,
                 ),
             )
@@ -1220,6 +1300,14 @@ def update_snippet(
 
     updates = payload.dict(exclude_unset=True)
     tag_updates = updates.pop("tags", None)
+    if "visibility" in updates:
+        new_visibility = normalize_snippet_visibility(updates["visibility"])
+        if snippet.group_id is not None and new_visibility != "public":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Private snippets cannot be assigned to a group",
+            )
+        updates["visibility"] = new_visibility
     if not updates and tag_updates is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No changes provided")
 
@@ -1275,10 +1363,11 @@ def delete_snippet(
     return snippet
 
 @app.get("/api/snippets/{sid}", response_model=SnippetOut)
-def get_snippet(sid: int, _current_user: Optional[UserOut] = Depends(get_optional_current_user)):
+def get_snippet(sid: int, current_user: Optional[UserOut] = Depends(get_optional_current_user)):
     snippet = fetch_snippet(sid)
     if snippet is None:
         raise HTTPException(status_code=404, detail="Not found")
+    ensure_snippet_visibility(snippet, current_user)
     return snippet
 
 # run: uvicorn main:app --host 127.0.0.1 --port 8000 --reload
@@ -1287,10 +1376,10 @@ def get_snippet(sid: int, _current_user: Optional[UserOut] = Depends(get_optiona
 def get_snippet_comments(
     sid: int, current_user: Optional[UserOut] = Depends(get_optional_current_user)
 ):
-    with get_conn() as conn, conn.cursor() as cur:
-        cur.execute("SELECT 1 FROM snippets WHERE id = %s", (sid,))
-        if cur.fetchone() is None:
-            raise HTTPException(status_code=404, detail="Snippet not found")
+    snippet = fetch_snippet(sid)
+    if snippet is None:
+        raise HTTPException(status_code=404, detail="Snippet not found")
+    ensure_snippet_visibility(snippet, current_user)
     user_id = current_user.id if current_user else None
     return list_comments_for_snippet(sid, user_id)
 
@@ -1306,26 +1395,12 @@ def create_snippet_comment(
     if not content:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Content is required")
 
+    snippet = fetch_snippet(sid)
+    if snippet is None:
+        raise HTTPException(status_code=404, detail="Snippet not found")
+    ensure_snippet_visibility(snippet, current_user)
+
     with get_conn() as conn:
-        snippet_group_id: Optional[int] = None
-        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
-            cur.execute("SELECT id, group_id FROM snippets WHERE id = %s", (sid,))
-            snippet_row = cur.fetchone()
-            if snippet_row is None:
-                raise HTTPException(status_code=404, detail="Snippet not found")
-            snippet_group_id = snippet_row["group_id"]
-
-        if snippet_group_id is not None:
-            group = fetch_group(conn, group_id=snippet_group_id)
-            if group is None:
-                raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Group not found")
-            membership = fetch_group_membership(conn, snippet_group_id, current_user.id)
-            if is_private_group(group) and not (membership or is_moderator(current_user)):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Membership required to comment in this private group",
-                )
-
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -1350,6 +1425,10 @@ def update_comment(comment_id: int, payload: CommentUpdate, current_user: UserOu
     existing = fetch_comment(comment_id, current_user.id)
     if existing is None:
         raise HTTPException(status_code=404, detail="Comment not found")
+    snippet = fetch_snippet(existing.snippet_id)
+    if snippet is None:
+        raise HTTPException(status_code=404, detail="Snippet not found")
+    ensure_snippet_visibility(snippet, current_user)
     if existing.user_id != current_user.id and not is_moderator(current_user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to update this comment")
 
@@ -1372,6 +1451,10 @@ def delete_comment(comment_id: int, current_user: UserOut = Depends(get_current_
     existing = fetch_comment(comment_id, current_user.id)
     if existing is None:
         raise HTTPException(status_code=404, detail="Comment not found")
+    snippet = fetch_snippet(existing.snippet_id)
+    if snippet is None:
+        raise HTTPException(status_code=404, detail="Snippet not found")
+    ensure_snippet_visibility(snippet, current_user)
     if existing.user_id != current_user.id and not is_moderator(current_user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to delete this comment")
 
@@ -1410,6 +1493,10 @@ def set_comment_vote(comment_id: int, payload: CommentVote, current_user: UserOu
     comment = fetch_comment(comment_id, current_user.id)
     if comment is None:
         raise HTTPException(status_code=404, detail="Comment not found")
+    snippet = fetch_snippet(comment.snippet_id)
+    if snippet is None:
+        raise HTTPException(status_code=404, detail="Snippet not found")
+    ensure_snippet_visibility(snippet, current_user)
     return comment
 
 @app.post("/api/snippets/{sid}/report", response_model=ReportOut)
@@ -1417,6 +1504,7 @@ def report_snippet(sid: int, payload: ReportCreate, current_user: UserOut = Depe
     snippet = fetch_snippet(sid)
     if snippet is None:
         raise HTTPException(status_code=404, detail="Snippet not found")
+    ensure_snippet_visibility(snippet, current_user)
     return create_report_for_content("snippet", sid, current_user, payload.reason)
 
 
@@ -1425,6 +1513,10 @@ def report_comment(comment_id: int, payload: ReportCreate, current_user: UserOut
     comment = fetch_comment(comment_id, current_user.id)
     if comment is None:
         raise HTTPException(status_code=404, detail="Comment not found")
+    snippet = fetch_snippet(comment.snippet_id)
+    if snippet is None:
+        raise HTTPException(status_code=404, detail="Snippet not found")
+    ensure_snippet_visibility(snippet, current_user)
     return create_report_for_content("comment", comment_id, current_user, payload.reason)
 
 

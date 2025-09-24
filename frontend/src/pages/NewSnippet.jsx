@@ -16,6 +16,7 @@ export default function NewSnippet() {
     verse: '',
     text_snippet: '',
     thoughts: '',
+    visibility: 'public'
   })
 
   const [msg, setMsg] = useState('')
@@ -26,7 +27,10 @@ export default function NewSnippet() {
 
   const onChange = (e) => {
     const { name, value } = e.target
-    setForm(f => ({ ...f, [name]: value }))
+    setForm((f) => ({ ...f, [name]: value }))
+    if (name === 'visibility' && value === 'private') {
+      setGroupId(null)
+    }
   }
 
   useEffect(() => {
@@ -57,7 +61,8 @@ export default function NewSnippet() {
       text_snippet: form.text_snippet || null,
       thoughts: form.thoughts || null,
       tags,
-      group_id: groupId == null ? null : groupId
+      visibility: form.visibility || 'public',
+      group_id: form.visibility === 'private' || groupId == null ? null : groupId,
     }
     try {
       await createSnippet(payload)
@@ -92,10 +97,24 @@ export default function NewSnippet() {
             <div className="form-text">Signed in user</div>
           </div>
           <div className="col-md-6">
+            <label className="form-label">Visibility</label>
+            <select
+              name="visibility"
+              className="form-select"
+              value={form.visibility}
+              onChange={onChange}
+            >
+              <option value="public">Public (visible to the community)</option>
+              <option value="private">Private (only you can view)</option>
+            </select>
+            <div className="form-text">Private snippets stay off group feeds and discovery pages.</div>
+          </div>
+          <div className="col-md-6">
             <GroupSelector
-              value={groupId}
+              value={form.visibility === 'private' ? null : groupId}
               onChange={setGroupId}
-              helperText="Choose a group to limit visibility to invited members."
+              disabled={form.visibility === 'private'}
+              helperText="Group members will be able to view and discuss the snippet."
             />
           </div>
           <div className="col-md-3">

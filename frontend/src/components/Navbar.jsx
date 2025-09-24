@@ -1,13 +1,11 @@
 import React from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth'
-import { hasGroupAccess } from '../features'
 
 export default function Navbar() {
   const navigate = useNavigate()
   const { user, logout, loading } = useAuth()
   const isModerator = user && (user.role === 'moderator' || user.role === 'admin')
-  const canAccessGroups = hasGroupAccess(user)
 
   const onLogout = async () => {
     try {
@@ -32,9 +30,9 @@ export default function Navbar() {
                   className="btn btn-sm btn-outline-light"
                   to="/groups"
                   data-testid="nav-groups"
-                  title={canAccessGroups ? 'Explore your groups' : 'Upgrade for group collaboration'}
+                  title={'Explore your groups'}
                 >
-                  Groups{canAccessGroups ? '' : ' 🔒'}
+                  Groups
                 </Link>
                 <Link className="btn btn-sm btn-primary" to="/new">
                   Share snippet

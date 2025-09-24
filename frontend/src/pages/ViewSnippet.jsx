@@ -26,6 +26,7 @@ const makeEmptySnippetForm = () => ({
   verse: '',
   text_snippet: '',
   thoughts: '',
+  visibility: 'public',
 })
 
 export default function ViewSnippet() {
@@ -230,6 +231,7 @@ export default function ViewSnippet() {
       verse: row.verse || '',
       text_snippet: row.text_snippet || '',
       thoughts: row.thoughts || '',
+      visibility: row.visibility || 'public',
     })
     setSnippetTags((row.tags || []).map((tag) => tag.name))
     setSnippetGroupId(row.group_id ?? row.groupId ?? null)
@@ -239,6 +241,9 @@ export default function ViewSnippet() {
   const handleSnippetFormChange = (event) => {
     const { name, value } = event.target
     setSnippetForm((prev) => ({ ...prev, [name]: value }))
+    if (name === 'visibility' && value === 'private') {
+      setSnippetGroupId(null)
+    }
   }
 
   const handleSnippetEditCancel = () => {
@@ -278,7 +283,9 @@ export default function ViewSnippet() {
       text_snippet: snippetForm.text_snippet || null,
       thoughts: snippetForm.thoughts || null,
       tags: snippetTags,
-      group_id: snippetGroupId == null ? null : snippetGroupId,
+      visibility: snippetForm.visibility || 'public',
+      group_id:
+        snippetForm.visibility === 'private' || snippetGroupId == null ? null : snippetGroupId,
     }
 
     setSnippetSaving(true)
@@ -453,7 +460,12 @@ export default function ViewSnippet() {
   return (
     <div className="card shadow-sm">
       <div className="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
-        <span>Snippet #{row.id}</span>
+        <div className="d-flex align-items-center gap-2">
+          <span>Snippet #{row.id}</span>
+          {row.visibility === 'private' && (
+            <span className="badge text-bg-warning">Private</span>
+          )}
+        </div>
         <div className="d-flex flex-wrap gap-2">
           <Link className="btn btn-sm btn-secondary" to="/">
             Back
@@ -520,10 +532,24 @@ export default function ViewSnippet() {
                 <input className="form-control" value={row.created_by_username || ''} readOnly />
               </div>
               <div className="col-md-6">
+                <label className="form-label">Visibility</label>
+                <select
+                  name="visibility"
+                  className="form-select"
+                  value={snippetForm.visibility}
+                  onChange={handleSnippetFormChange}
+                >
+                  <option value="public">Public (visible to the community)</option>
+                  <option value="private">Private (only you can view)</option>
+                </select>
+                <div className="form-text">Private snippets stay off group feeds and discovery pages.</div>
+              </div>
+              <div className="col-md-6">
                 <GroupSelector
-                  value={snippetGroupId}
+                  value={snippetForm.visibility === 'private' ? null : snippetGroupId}
                   onChange={setSnippetGroupId}
-                  helperText="Switching groups updates who can view this snippet."
+                  disabled={snippetForm.visibility === 'private'}
+                  helperText="Group members will be able to view and discuss the snippet."
                 />
               </div>
               <div className="col-md-3">
@@ -618,6 +644,19 @@ export default function ViewSnippet() {
               <label className="form-label">Author</label>
               <input className="form-control" value={row.created_by_username || ''} readOnly />
             </div>
+            <div className="col-md-6">
+              <label className="form-label">Visibility</label>
+              <input
+                className="form-control"
+                value={row.visibility === 'private' ? 'Private (only you can view)' : 'Public'}
+                readOnly
+              />
+              <div className="form-text">
+                {row.visibility === 'private'
+                  ? 'This snippet is only visible to you.'
+                  : 'Visible to the community and eligible for discovery.'}
+              </div>
+            </div>
             {(row.group_id || groupDetail) && (
               <div className="col-md-6">
                 <label className="form-label">Group</label>
@@ -633,9 +672,9 @@ export default function ViewSnippet() {
                       return 'Only members of this private group can view the snippet.'
                     }
                     if (privacyValue === 'unlisted') {
-                      return 'This group is unlisted. Share the link directly with collaborators.'
+                      return 'This group is unlisted. Only members can view the shared snippets.'
                     }
-                    return 'Shared in a public group visible to signed-in members.'
+                    return 'Shared in a group. Members can view and discuss the snippet.'
                   })()}
                 </div>
               </div>

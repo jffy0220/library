@@ -15,9 +15,9 @@ describe('GroupsLayout access gating', () => {
     mockUseAuth.mockReset()
   })
 
-  it('renders upgrade gate for non-premium users', () => {
+  it('renders sign-in gate when no user is present', () => {
     mockUseAuth.mockReturnValue({
-      user: { id: 1, username: 'reader', role: 'user', subscriptionTier: 'free' },
+      user: null,
       loading: false,
     })
 
@@ -35,7 +35,7 @@ describe('GroupsLayout access gating', () => {
     expect(screen.queryByText('child route')).not.toBeInTheDocument()
   })
 
-  it('renders child routes when user has group access', () => {
+  it('renders child routes when a user is signed in', () => {
     mockUseAuth.mockReturnValue({
       user: { id: 2, username: 'premium', role: 'user', subscriptionTier: 'plus' },
       loading: false,
