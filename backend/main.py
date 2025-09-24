@@ -3,7 +3,7 @@ import re
 from collections import defaultdict
 from datetime import datetime, date, timedelta
 from threading import Lock
-from typing import Optional, List, Dict, Tuple, Any
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from fastapi import (
     BackgroundTasks,
@@ -18,13 +18,14 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 import psycopg2
 import psycopg2.extras
-from pydantic import BaseModel, conint, Field, constr, EmailStr
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, conint, constr, model_validator
 from dotenv import load_dotenv
 from jose import JWTError, jwt
 from passlib.hash import bcrypt
 import logging
 import time
 
+from backend.app.schemas.notifications import NotificationCreate, NotificationType
 try:
     from backend.email_service.providers import (
         EmailProvider,
@@ -503,6 +504,25 @@ def refresh_trending_view() -> None:
 
 class CommentCreate(BaseModel):
     content: str
+    reply_to_comment_id: Optional[int] = Field(default=None, alias="replyToCommentId")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    @model_validator(mode="before")
+    def _normalize_reply_comment_id(cls, values: Any) -> Any:
+        if isinstance(values, dict):
+            if "replyToCommentId" not in values and "reply_to_comment_id" not in values:
+                for legacy_key in (
+                    "parentCommentId",
+                    "parent_comment_id",
+                    "replyCommentId",
+                    "reply_comment_id",
+                ):
+                    if legacy_key in values:
+                        normalized = dict(values)
+                        normalized["replyToCommentId"] = normalized[legacy_key]
+                        return normalized
+        return values
 
 class CommentUpdate(BaseModel):
     content: Optional[str] = None
@@ -522,6 +542,85 @@ class CommentOut(BaseModel):
     user_vote: int
     group_id: Optional[int] = None
 
+_MENTION_PATTERN = re.compile(r"(?<!\w)@([A-Za-z0-9_]{1,80})")
+
+
+def _extract_mentions(text: str) -> Set[str]:
+    mentions: Dict[str, str] = {}
+    for match in _MENTION_PATTERN.finditer(text):
+        username = match.group(1)
+        key = username.lower()
+        if key not in mentions:
+            mentions[key] = username
+    return set(mentions.values())
+
+
+def _fetch_user_ids_by_usernames(usernames: Set[str]) -> Dict[str, int]:
+    if not usernames:
+        return {}
+    normalized = sorted({name.lower() for name in usernames if name})
+    if not normalized:
+        return {}
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT id, username FROM users WHERE LOWER(username) = ANY(%s)",
+            (normalized,),
+        )
+        rows = cur.fetchall()
+    return {row[1].lower(): row[0] for row in rows}
+
+
+def _build_comment_notifications(
+    actor_id: int,
+    snippet_owner_id: Optional[int],
+    snippet_id: int,
+    comment_id: int,
+    parent_comment_user_id: Optional[int],
+    mention_user_ids: Iterable[int],
+) -> List[NotificationCreate]:
+    events: List[NotificationCreate] = []
+    if snippet_owner_id and snippet_owner_id != actor_id:
+        events.append(
+            NotificationCreate(
+                userId=snippet_owner_id,
+                actorUserId=actor_id,
+                snippetId=snippet_id,
+                commentId=comment_id,
+                type=NotificationType.REPLY_TO_SNIPPET,
+            )
+        )
+    if parent_comment_user_id and parent_comment_user_id != actor_id:
+        events.append(
+            NotificationCreate(
+                userId=parent_comment_user_id,
+                actorUserId=actor_id,
+                snippetId=snippet_id,
+                commentId=comment_id,
+                type=NotificationType.REPLY_TO_COMMENT,
+            )
+        )
+    for mention_user_id in sorted({uid for uid in mention_user_ids if uid != actor_id}):
+        events.append(
+            NotificationCreate(
+                userId=mention_user_id,
+                actorUserId=actor_id,
+                snippetId=snippet_id,
+                commentId=comment_id,
+                type=NotificationType.MENTION,
+            )
+        )
+    return events
+
+
+def _schedule_notification_tasks(
+    background_tasks: BackgroundTasks, events: Sequence[NotificationCreate]
+) -> None:
+    if not events:
+        return
+    from backend.app.services.notifications import create_notification
+
+    for event in events:
+        background_tasks.add_task(create_notification, event)
 
 class UserOut(BaseModel):
     id: int
@@ -1400,6 +1499,12 @@ def create_snippet_comment(
         raise HTTPException(status_code=404, detail="Snippet not found")
     ensure_snippet_visibility(snippet, current_user)
 
+    parent_comment = None
+    if payload.reply_to_comment_id is not None:
+        parent_comment = fetch_comment(payload.reply_to_comment_id, current_user.id)
+        if parent_comment is None or parent_comment.snippet_id != snippet.id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid parent comment")
+
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -1418,6 +1523,21 @@ def create_snippet_comment(
     comment = fetch_comment(comment_id, current_user.id)
     if comment is None:
         raise HTTPException(status_code=500, detail="Unable to load comment")
+    
+    mention_usernames = _extract_mentions(content)
+    mentioned_user_map = _fetch_user_ids_by_usernames(mention_usernames)
+    mention_user_ids = set(mentioned_user_map.values())
+
+    notification_events = _build_comment_notifications(
+        current_user.id,
+        snippet.created_by_user_id,
+        comment.snippet_id,
+        comment.id,
+        parent_comment.user_id if parent_comment else None,
+        mention_user_ids,
+    )
+    _schedule_notification_tasks(background_tasks, notification_events)
+    
     return comment
 
 @app.patch("/api/comments/{comment_id}", response_model=CommentOut)
