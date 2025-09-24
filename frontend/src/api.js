@@ -135,6 +135,21 @@ export async function resolveModerationReport(reportId, payload) {
   return data
 }
 
+export async function listNotifications(params = {}) {
+  const query = {}
+  if (params.limit) query.limit = params.limit
+  if (params.cursor) query.cursor = params.cursor
+  const config = Object.keys(query).length > 0 ? { params: query } : undefined
+  const { data } = await api.get('/notifications', config)
+  return data
+}
+
+export async function markNotificationsRead(ids) {
+  const payload = { ids }
+  const { data } = await api.post('/notifications/mark_read', payload)
+  return data
+}
+
 export async function discoverGroups(params = {}) {
   const query = new URLSearchParams()
   if (params.q) query.set('q', params.q)

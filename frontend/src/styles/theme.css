@@ -798,6 +798,44 @@ a:focus {
   color: inherit;
 }
 
+notifications-page {
+  display: flex;
+  flex-direction: column;
+}
+
+.notification-card {
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.notification-card--read {
+  background: rgba(15, 23, 42, 0.55);
+}
+
+.notification-card:not(.notification-card--read) {
+  border-color: rgba(99, 102, 241, 0.35);
+  background: rgba(15, 23, 42, 0.8);
+}
+
+.notification-card__avatar {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.9), rgba(129, 140, 248, 0.75));
+  color: #f8fafc;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.95rem;
+  text-transform: uppercase;
+}
+
+.notification-card--read .notification-card__avatar {
+  background: rgba(100, 116, 139, 0.6);
+}
+
 .list-group-item {
   background: transparent;
   color: inherit;

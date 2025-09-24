@@ -8,6 +8,7 @@ import Login from './pages/Login'
 import Register from './pages/Register'
 import ForgotPassword from './pages/ForgotPassword'
 import ModerationDashboard from './pages/ModerationDashboard'
+import NotificationsPage from './pages/Notfications'
 import GroupDiscover from './pages/Groups/GroupDiscover'
 import GroupFeed from './pages/Groups/GroupFeed'
 import GroupManager from './pages/Groups/GroupManager'
@@ -73,6 +74,7 @@ export default function App() {
             <Route path="/snippet/:id" element={<ViewSnippet />} />
             <Route element={<RequireAuth />}>
               <Route path="/new" element={<NewSnippet />} />
+              <Route path="/notifications" element={<NotificationsPage />} />
               <Route path="/groups" element={<GroupsLayout />}>
                 <Route index element={<GroupDiscover />} />
                 <Route path="discover" element={<GroupDiscover />} />
