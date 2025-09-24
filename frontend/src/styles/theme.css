@@ -222,6 +222,56 @@ a:focus {
   gap: 0.65rem;
 }
 
+.app-navbar__notifications {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  background: rgba(148, 163, 184, 0.16);
+  color: #e2e8f0;
+  text-decoration: none;
+  transition: background 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.app-navbar__notifications:hover,
+.app-navbar__notifications:focus-visible {
+  background: rgba(148, 163, 184, 0.28);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.25);
+  transform: translateY(-1px);
+}
+
+.app-navbar__notifications:focus-visible {
+  outline: 2px solid rgba(99, 102, 241, 0.8);
+  outline-offset: 2px;
+}
+
+.app-navbar__bell {
+  font-size: 1.15rem;
+  line-height: 1;
+}
+
+.app-navbar__notifications-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #ef4444;
+  color: #ffffff;
+  font-size: 0.65rem;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.9);
+}
+
 .app-content {
   padding: 2.8rem 1.5rem 4rem;
 }

@@ -224,6 +224,15 @@ export async function acceptGroupInvite(inviteCode) {
   return data
 }
 
+export async function getUnreadNotificationCount({ signal } = {}) {
+  const config = {}
+  if (signal) {
+    config.signal = signal
+  }
+  const { data } = await api.get('/notifications/unread_count', config)
+  return data
+}
+
 export async function register(payload) {
   const { data } = await api.post('/auth/register', payload)
   return data
