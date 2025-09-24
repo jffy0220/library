@@ -31,7 +31,8 @@ LEFT JOIN comments c ON c.snippet_id = s.id
 LEFT JOIN snippet_tags st ON st.snippet_id = s.id
 LEFT JOIN groups g ON g.id = s.group_id
 WHERE s.visibility = 'public'
-  AND s.group_id IS NULL;
+  AND s.group_id IS NULL
+GROUP BY s.id;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_trending_snippet_activity_id
   ON trending_snippet_activity (snippet_id);
