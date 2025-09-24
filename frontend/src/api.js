@@ -135,12 +135,15 @@ export async function resolveModerationReport(reportId, payload) {
   return data
 }
 
-export async function listNotifications(params = {}) {
+export async function listNotifications(params = {}, config = {}) {
   const query = {}
   if (params.limit) query.limit = params.limit
   if (params.cursor) query.cursor = params.cursor
-  const config = Object.keys(query).length > 0 ? { params: query } : undefined
-  const { data } = await api.get('/notifications', config)
+  const requestConfig = { ...config }
+  if (Object.keys(query).length > 0) {
+    requestConfig.params = query
+  }
+  const { data } = await api.get('/notifications', requestConfig)
   return data
 }
 
