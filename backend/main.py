@@ -25,7 +25,15 @@ from passlib.hash import bcrypt
 import logging
 import time
 
-from backend.app.schemas.notifications import NotificationCreate, NotificationType
+try:
+    from backend.app.schemas.notifications import NotificationCreate, NotificationType
+except ModuleNotFoundError as exc:
+    if exc.name != "backend":
+        raise
+    from app.schemas.notifications import (  # type: ignore[no-redef]
+        NotificationCreate,
+        NotificationType,
+    )
 try:
     from backend.app.email import (
         EmailConfig,
