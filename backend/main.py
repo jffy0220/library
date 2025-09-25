@@ -1731,6 +1731,23 @@ def resolve_report(report_id: int, payload: ReportResolve, current_user: UserOut
         raise HTTPException(status_code=500, detail="Unable to load report")
     return report
 
+try:
+    from backend import app_context
+except ModuleNotFoundError as exc:
+    if exc.name != "backend":
+        raise
+    import app_context  # type: ignore[no-redef]
+
+app_context.configure(
+    get_conn=get_conn,
+    get_current_user=get_current_user,
+    get_optional_current_user=get_optional_current_user,
+    user_model=UserOut,
+    snippet_model=SnippetOut,
+    snippet_list_response_model=SnippetListResponse,
+    comment_model=CommentOut,
+    fetch_tags_for_snippets=fetch_tags_for_snippets,
+)
 
 try:
     from backend import groups as group_routes

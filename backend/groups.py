@@ -10,11 +10,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, EmailStr, Field, ConfigDict, constr
 
 try:
-    import backend.main as main
+    from backend import app_context
 except ModuleNotFoundError as exc:
     if exc.name != "backend":
         raise
-    import main  # type: ignore[no-redef]
+    import app_context  # type: ignore[no-redef]
+
 
 try:
     from backend.group_service import (
@@ -162,7 +163,7 @@ def _coerce_invite(row: Dict[str, Any]) -> Dict[str, Any]:
 
 def _ensure_group_visibility(
     group: Dict[str, Any],
-    viewer: Optional[main.UserOut],
+    viewer: Optional[Any],
     membership: Optional[Dict[str, Any]],
 ) -> None:
     if viewer and is_site_moderator(viewer):
@@ -200,14 +201,14 @@ def _generate_invite_code() -> str:
 
 
 @router.post("/", response_model=GroupOut, status_code=status.HTTP_201_CREATED)
-def create_group(payload: GroupCreate, current_user: main.UserOut = Depends(main.get_current_user)):
+def create_group(payload: GroupCreate, current_user: Any = Depends(app_context.get_current_user)):
     slug = payload.slug.strip().lower()
     name = payload.name.strip()
     description = payload.description.strip() if payload.description else None
     privacy_state = _normalize_privacy_state(payload.privacy_state)
     invite_only = bool(payload.invite_only)
 
-    with main.get_conn() as conn:
+    with app_context.get_conn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
             try:
                 cur.execute(
@@ -242,7 +243,7 @@ def create_group(payload: GroupCreate, current_user: main.UserOut = Depends(main
 def update_group(
     group_id: int,
     payload: GroupUpdate,
-    current_user: main.UserOut = Depends(main.get_current_user),
+    current_user: Any = Depends(app_context.get_current_user),
 ):
     updates: Dict[str, Any] = {}
     if payload.name is not None:
@@ -260,7 +261,7 @@ def update_group(
     if not updates:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No changes provided")
 
-    with main.get_conn() as conn:
+    with app_context.get_conn() as conn:
         group = _ensure_group(conn, group_id)
         membership = fetch_group_membership(conn, group_id, current_user.id)
         actor_role = membership["role"] if membership else None
@@ -285,9 +286,9 @@ def update_group(
 @router.get("/{group_id}/members", response_model=List[GroupMemberOut])
 def list_group_members(
     group_id: int,
-    current_user: Optional[main.UserOut] = Depends(main.get_optional_current_user),
+    current_user: Optional[Any] = Depends(app_context.get_optional_current_user),
 ):
-    with main.get_conn() as conn:
+    with app_context.get_conn() as conn:
         group = _ensure_group(conn, group_id)
         membership = None
         if current_user:
@@ -304,11 +305,11 @@ def upsert_group_member(
     group_id: int,
     user_id: int,
     payload: MembershipSetRequest,
-    current_user: main.UserOut = Depends(main.get_current_user),
+    current_user: Any = Depends(app_context.get_current_user),
 ):
     desired_role = _validate_role(payload.role)
 
-    with main.get_conn() as conn:
+    with app_context.get_conn() as conn:
         group = _ensure_group(conn, group_id)
         actor_membership = fetch_group_membership(conn, group_id, current_user.id)
         actor_role = actor_membership["role"] if actor_membership else None
@@ -355,9 +356,9 @@ def upsert_group_member(
 def remove_group_member(
     group_id: int,
     user_id: int,
-    current_user: main.UserOut = Depends(main.get_current_user),
+    current_user: Any = Depends(app_context.get_current_user),
 ):
-    with main.get_conn() as conn:
+    with app_context.get_conn() as conn:
         group = _ensure_group(conn, group_id)
         actor_membership = fetch_group_membership(conn, group_id, current_user.id)
         actor_role = actor_membership["role"] if actor_membership else None
@@ -389,9 +390,9 @@ def remove_group_member(
 @router.post("/{group_id}/join", response_model=GroupMemberOut)
 def join_group(
     group_id: int,
-    current_user: main.UserOut = Depends(main.get_current_user),
+    current_user: Any = Depends(app_context.get_current_user),
 ):
-    with main.get_conn() as conn:
+    with app_context.get_conn() as conn:
         group = _ensure_group(conn, group_id)
         existing_membership = fetch_group_membership(conn, group_id, current_user.id)
         if existing_membership:
@@ -434,13 +435,13 @@ def join_group(
 def create_group_invite(
     group_id: int,
     payload: InviteCreate,
-    current_user: main.UserOut = Depends(main.get_current_user),
+    current_user: Any = Depends(app_context.get_current_user),
 ):
     invited_user_id = payload.invited_user_id
     invited_email = payload.invited_user_email.lower() if payload.invited_user_email else None
     expires_hours = payload.expires_in_hours or INVITE_DEFAULT_HOURS
 
-    with main.get_conn() as conn:
+    with app_context.get_conn() as conn:
         group = _ensure_group(conn, group_id)
         actor_membership = fetch_group_membership(conn, group_id, current_user.id)
         actor_role = actor_membership["role"] if actor_membership else None
@@ -505,11 +506,11 @@ def create_group_invite(
 @router.post("/invites/{invite_code}/accept", response_model=GroupMemberOut)
 def accept_group_invite(
     invite_code: str,
-    current_user: main.UserOut = Depends(main.get_current_user),
+    current_user: Any = Depends(app_context.get_current_user),
 ):
     now = datetime.utcnow()
 
-    with main.get_conn() as conn:
+    with app_context.get_conn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
             cur.execute(
                 """
@@ -582,14 +583,14 @@ def accept_group_invite(
     return GroupMemberOut(**_coerce_member(dict(membership_row)))
 
 
-@router.get("/{group_id}/snippets", response_model=main.SnippetListResponse)
+@router.get("/{group_id}/snippets", response_model=app_context.get_snippet_list_response_model())
 def list_group_snippets(
     group_id: int,
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=200),
-    current_user: Optional[main.UserOut] = Depends(main.get_optional_current_user),
+    current_user: Optional[Any] = Depends(app_context.get_optional_current_user),
 ):
-    with main.get_conn() as conn:
+    with app_context.get_conn() as conn:
         group = _ensure_group(conn, group_id)
         membership = None
         if current_user:
@@ -617,23 +618,26 @@ def list_group_snippets(
             )
             rows = cur.fetchall()
 
-        snippets = [main.SnippetOut(**dict(row)) for row in rows]
-        tag_map = main.fetch_tags_for_snippets(conn, [snippet.id for snippet in snippets])
+        snippet_model = app_context.get_snippet_model()
+        snippets = [snippet_model(**dict(row)) for row in rows]
+        tag_map = app_context.fetch_tags_for_snippets(conn, [snippet.id for snippet in snippets])
+
         for snippet in snippets:
             snippet.tags = tag_map.get(snippet.id, [])
 
         next_page = page + 1 if offset + len(snippets) < total else None
 
-    return main.SnippetListResponse(items=snippets, total=total, next_page=next_page)
+    response_model = app_context.get_snippet_list_response_model()
+    return response_model(items=snippets, total=total, next_page=next_page)
 
 
-@router.get("/{group_id}/discussions", response_model=List[main.CommentOut])
+@router.get("/{group_id}/discussions", response_model=List[app_context.get_comment_model()])
 def list_group_discussions(
     group_id: int,
     limit: int = Query(50, ge=1, le=200),
-    current_user: Optional[main.UserOut] = Depends(main.get_optional_current_user),
+    current_user: Optional[Any] = Depends(app_context.get_optional_current_user),
 ):
-    with main.get_conn() as conn:
+    with app_context.get_conn() as conn:
         group = _ensure_group(conn, group_id)
         membership = None
         viewer_id: Optional[int] = None
@@ -667,4 +671,5 @@ def list_group_discussions(
             )
             rows = cur.fetchall()
 
-    return [main.CommentOut(**dict(row)) for row in rows]
+    comment_model = app_context.get_comment_model()
+    return [comment_model(**dict(row)) for row in rows]
