@@ -1,7 +1,7 @@
 """Email provider configuration utilities."""
 
-from ...mail.config import EmailConfig, load_email_config
-from ...mail.providers import (
+from .config import EmailConfig, load_email_config
+from .providers import (
     DevPrintProvider,
     EmailProvider,
     SMTPProvider,
@@ -9,7 +9,7 @@ from ...mail.providers import (
     SESProvider,
     create_email_provider,
 )
-from ...mail.renderer import render_email_digest, render_reply_notification
+from .renderer import render_email_digest, render_reply_notification
 
 __all__ = [
     "DevPrintProvider",

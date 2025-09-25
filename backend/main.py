@@ -1,7 +1,14 @@
++17
+-3
+
+import logging
 import os
 import re
+import sys
+import time
 from collections import defaultdict
 from datetime import datetime, date, timedelta
+from pathlib import Path
 from threading import Lock
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
@@ -22,8 +29,10 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, conint, constr, mod
 from dotenv import load_dotenv
 from jose import JWTError, jwt
 from passlib.hash import bcrypt
-import logging
-import time
+
+_project_root = Path(__file__).resolve().parents[1]
+if str(_project_root) not in sys.path:
+    sys.path.append(str(_project_root))
 
 try:
     from backend.app.schemas.notifications import NotificationCreate, NotificationType
