@@ -119,10 +119,11 @@ def _compose_comment_context(
     snippet_excerpt = _build_snippet_excerpt(comment_row)
     if snippet_excerpt:
         snippet_excerpt_text = f"Snippet excerpt:\n{snippet_excerpt}\n\n"
+        snippet_excerpt_html_body = html.escape(snippet_excerpt).replace("\n", "<br />")
         snippet_excerpt_html = (
             "<hr style=\"border: none; border-top: 1px solid #e2e8f0; margin: 1.5em 0;\" />"
             "<p style=\"margin-bottom: 0.5em; font-weight: bold;\">Snippet excerpt</p>"
-            f"<p>{html.escape(snippet_excerpt).replace('\n', '<br />')}</p>"
+            f"<p>{snippet_excerpt_html_body}</p>"
         )
     else:
         snippet_excerpt_text = ""
