@@ -941,8 +941,15 @@ def create_report_for_content(content_type: str, content_id: int, reporter: User
     return report
 
 from backend.app.routes.notifications import router as notifications_router
+from backend.digests import (
+    get_digest_metrics,
+    shutdown_digest_scheduler,
+    start_digest_scheduler,
+)
 
 app = FastAPI(title="Book Snippets API")
+
+start_digest_scheduler()
 
 # Vite proxy origin
 app.add_middleware(
@@ -1104,6 +1111,15 @@ def healthz():
 @app.get("/api/metrics/trending-refresh")
 def read_trending_refresh_metrics() -> Dict[str, Any]:
     return get_trending_refresh_metrics()
+
+@app.get("/api/metrics/email-digests")
+def read_email_digest_metrics() -> Dict[str, Any]:
+    return get_digest_metrics()
+
+
+@app.on_event("shutdown")
+def _shutdown_digest_scheduler() -> None:
+    shutdown_digest_scheduler()
 
 @app.get("/api/snippets", response_model=SnippetListResponse)
 def list_snippets(

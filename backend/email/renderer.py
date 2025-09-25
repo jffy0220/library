@@ -5,7 +5,10 @@ import re
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
-from ..schemas.notifications import NotificationType
+try:  # pragma: no cover - allow import when package layout differs
+    from backend.app.schemas.notifications import NotificationType
+except ModuleNotFoundError:  # pragma: no cover - fallback for local execution
+    from ..app.schemas.notifications import NotificationType  # type: ignore[no-redef]
 
 _TEMPLATE_PATH = Path(__file__).resolve().parent / "templates"
 _PLACEHOLDER_PATTERN = re.compile(r"{{\s*(\w+)\s*}}")
@@ -40,6 +43,8 @@ def render_reply_notification(
     base = "reply_to_comment" if notification_type == NotificationType.REPLY_TO_COMMENT else "reply_to_snippet"
     return _render_subject_body(base, context)
 
+def render_email_digest(context: Dict[str, Any]) -> Tuple[str, str, str]:
+    return _render_subject_body("email_digest", context)
 
 class EmailRenderer:
     """Compatibility wrapper for legacy imports."""
