@@ -3,6 +3,9 @@ from __future__ import annotations
 
 from typing import Optional
 
+from functools import lru_cache
+from typing import Any, Callable
+
 from fastapi import APIRouter, Depends, Query
 
 from ..schemas.notifications import (
@@ -12,12 +15,23 @@ from ..schemas.notifications import (
     NotificationUnreadCount,
 )
 
-try:  # pragma: no cover - import fallback for tests executed as scripts
-    from backend.main import get_current_user
-except ModuleNotFoundError as exc:  # pragma: no cover - fallback for local execution
-    if exc.name != "backend":
-        raise
-    from ...main import get_current_user  # type: ignore[no-redef]
+def _resolve_get_current_user() -> Callable[..., Any]:  # pragma: no cover - helper for lazy import
+    try:
+        from backend.main import get_current_user as resolved
+    except ModuleNotFoundError as exc:
+        if exc.name != "backend":
+            raise
+        from ...main import get_current_user as resolved  # type: ignore[no-redef]
+    return resolved
+
+
+@lru_cache(maxsize=1)
+def _get_current_user_callable() -> Callable[..., Any]:
+    return _resolve_get_current_user()
+
+
+def _get_current_user(*args: Any, **kwargs: Any):
+    return _get_current_user_callable()(*args, **kwargs)
 
 _DEFAULT_PAGE_SIZE = 20
 _MAX_PAGE_SIZE = 100
@@ -34,7 +48,7 @@ def list_notifications(
         ge=1,
         le=_MAX_PAGE_SIZE,
     ),
-    current_user=Depends(get_current_user),
+    current_user=Depends(_get_current_user),
 ) -> NotificationListResponse:
     """Return paginated notifications for the authenticated user."""
     from ..services import notifications as notifications_service
@@ -47,7 +61,7 @@ def list_notifications(
 
 
 @router.get("/unread_count", response_model=NotificationUnreadCount)
-def get_unread_count(*, current_user=Depends(get_current_user)) -> NotificationUnreadCount:
+def get_unread_count(*, current_user=Depends(_get_current_user)) -> NotificationUnreadCount:
     """Return the unread notification count for the current user."""
     from ..services import notifications as notifications_service
 
@@ -59,7 +73,7 @@ def get_unread_count(*, current_user=Depends(get_current_user)) -> NotificationU
 def mark_notifications_read(
     payload: NotificationMarkReadRequest,
     *,
-    current_user=Depends(get_current_user),
+    current_user=Depends(_get_current_user),
 ) -> NotificationMarkReadResponse:
     """Mark the provided notifications as read for the current user."""
     from ..services import notifications as notifications_service

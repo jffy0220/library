@@ -1,7 +1,26 @@
-import React, { useCallback, useState } from 'react'
+import React, { useCallback, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth'
 import { useNotifications } from '../hooks/useNotifications'
+import { useNotificationPreferences } from '../hooks/useNotificationPreferences'
+
+const NOTIFICATION_PREF_KEYS = {
+  reply_to_snippet: 'replyToSnippet',
+  reply_to_comment: 'replyToComment',
+  mention: 'mention',
+  vote_on_your_snippet: 'voteOnYourSnippet',
+  moderation_update: 'moderationUpdate',
+  system: 'system'
+}
+
+const TOAST_MESSAGES = {
+  reply_to_snippet: (actor) => `New reply from ${actor}.`,
+  reply_to_comment: (actor) => `${actor} replied to your comment.`,
+  mention: (actor) => `${actor} mentioned you in a discussion.`,
+  vote_on_your_snippet: (actor) => `${actor} reacted to your snippet.`,
+  moderation_update: () => 'There is an update on your moderation report.',
+  system: () => 'There is an update from Book Snippets.'
+}
 
 export default function Navbar() {
   const navigate = useNavigate()
@@ -9,12 +28,32 @@ export default function Navbar() {
   const isModerator = user && (user.role === 'moderator' || user.role === 'admin')
   const [toastNotification, setToastNotification] = useState(null)
   const [showToast, setShowToast] = useState(false)
+  const { preferences } = useNotificationPreferences()
+
+  const isToastEnabled = useCallback(
+    (notification) => {
+      if (!notification?.type) return true
+      const key = NOTIFICATION_PREF_KEYS[notification.type]
+      if (!key) return true
+      if (!preferences) return true
+      const value = preferences[key]
+      if (typeof value === 'boolean') {
+        return value
+      }
+      const fallbackKey = key.replace(/[A-Z]/g, (match) => `_${match.toLowerCase()}`)
+      if (typeof preferences[fallbackKey] === 'boolean') {
+        return preferences[fallbackKey]
+      }
+      return true
+    },
+    [preferences]
+  )
 
   const handleNewNotification = useCallback((notification) => {
-    if (!notification) return
+    if (!notification || !isToastEnabled(notification)) return
     setToastNotification(notification)
     setShowToast(true)
-  }, [])
+  }, [isToastEnabled])
 
   const handleDismissToast = useCallback(() => {
     setShowToast(false)
@@ -39,7 +78,20 @@ export default function Navbar() {
   const hasUnreadNotifications = !notificationsLoading && unreadCount > 0
   const unreadBadge = unreadCount > 99 ? '99+' : unreadCount
   const actorName = toastNotification?.actorName
-  const toastActor = typeof actorName === 'string' && actorName.trim() ? actorName.trim() : 'someone'
+  const toastActor = useMemo(() => {
+    if (typeof actorName === 'string' && actorName.trim()) {
+      return actorName.trim()
+    }
+    return 'someone'
+  }, [actorName])
+
+  const toastMessage = useMemo(() => {
+    const type = toastNotification?.type
+    if (type && TOAST_MESSAGES[type]) {
+      return TOAST_MESSAGES[type](toastActor)
+    }
+    return `New update from ${toastActor}.`
+  }, [toastNotification, toastActor])
 
   const onLogout = async () => {
     try {
@@ -71,6 +123,9 @@ export default function Navbar() {
                   </Link>
                   <Link className="btn btn-sm btn-primary" to="/new">
                     Share snippet
+                  </Link>
+                  <Link className="btn btn-sm btn-outline-light" to="/settings/notifications">
+                    Settings
                   </Link>
                   {isModerator && (
                     <Link className="btn btn-sm btn-outline-info" to="/moderation">
@@ -142,9 +197,7 @@ export default function Navbar() {
               />
             </div>
             <div className="toast-body">
-              <p className="mb-3">
-                New reply from <strong>{toastActor}</strong>.
-              </p>
+              <p className="mb-3">{toastMessage}</p>
               <Link className="btn btn-sm btn-primary" to="/notifications" onClick={handleViewNotifications}>
                 View
               </Link>

@@ -249,14 +249,19 @@ export default function NotificationsPage() {
           <h1 className="h3 mb-1">Notifications</h1>
           <p className="text-muted mb-0">Stay up to date with replies, mentions, and more.</p>
         </div>
-        <button
-          className="btn btn-outline-primary"
-          type="button"
-          onClick={handleMarkAll}
-          disabled={unreadCount === 0 || markingAll}
-        >
-          {markingAll ? 'Marking…' : unreadCount === 0 ? 'All caught up' : 'Mark all as read'}
-        </button>
+        <div className="d-flex flex-wrap gap-2">
+          <Link className="btn btn-outline-secondary" to="/settings/notifications">
+            Notification settings
+          </Link>
+          <button
+            className="btn btn-outline-primary"
+            type="button"
+            onClick={handleMarkAll}
+            disabled={unreadCount === 0 || markingAll}
+          >
+            {markingAll ? 'Marking…' : unreadCount === 0 ? 'All caught up' : 'Mark all as read'}
+          </button>
+        </div>
       </div>
       {actionError && <div className="alert alert-danger">{actionError}</div>}
       {error && !loading && <div className="alert alert-danger">{error}</div>}

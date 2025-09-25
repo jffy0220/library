@@ -153,6 +153,16 @@ export async function markNotificationsRead(ids) {
   return data
 }
 
+export async function getNotificationPreferences() {
+  const { data } = await api.get('/users/me/notification_prefs')
+  return data
+}
+
+export async function updateNotificationPreferences(payload) {
+  const { data } = await api.put('/users/me/notification_prefs', payload)
+  return data
+}
+
 export async function discoverGroups(params = {}) {
   const query = new URLSearchParams()
   if (params.q) query.set('q', params.q)

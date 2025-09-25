@@ -8,13 +8,15 @@ import Login from './pages/Login'
 import Register from './pages/Register'
 import ForgotPassword from './pages/ForgotPassword'
 import ModerationDashboard from './pages/ModerationDashboard'
-import NotificationsPage from './pages/Notfications'
+import NotificationsPage from './pages/Notifications'
+import NotificationSettingsPage from './pages/SettingsNotifications'
 import GroupDiscover from './pages/Groups/GroupDiscover'
 import GroupFeed from './pages/Groups/GroupFeed'
 import GroupManager from './pages/Groups/GroupManager'
 import GroupInviteAccept from './pages/Groups/GroupInviteAccept'
 import GroupsLayout from './pages/Groups/GroupsLayout'
 import { AuthProvider, useAuth } from './auth'
+import { NotificationPreferencesProvider } from './hooks/useNotificationPreferences'
 
 function RequireAuth() {
   const { user, loading } = useAuth()
@@ -68,13 +70,15 @@ function AppLayout() {
 export default function App() {
   return (
     <AuthProvider>
-      <Routes>
-        <Route element={<AppLayout />}>
+      <NotificationPreferencesProvider>
+        <Routes>
+          <Route element={<AppLayout />}>
             <Route path="/" element={<List />} />
             <Route path="/snippet/:id" element={<ViewSnippet />} />
             <Route element={<RequireAuth />}>
               <Route path="/new" element={<NewSnippet />} />
               <Route path="/notifications" element={<NotificationsPage />} />
+              <Route path="/settings/notifications" element={<NotificationSettingsPage />} />
               <Route path="/groups" element={<GroupsLayout />}>
                 <Route index element={<GroupDiscover />} />
                 <Route path="discover" element={<GroupDiscover />} />
@@ -86,14 +90,15 @@ export default function App() {
             <Route element={<RequireModerator />}>
               <Route path="/moderation" element={<ModerationDashboard />} />
             </Route>
-        </Route>
-        <Route element={<RequireNoAuth />}>
-          <Route path="/login" element={<Login />} />
-          <Route path="/register" element={<Register />} />
-          <Route path="/forgot-password" element={<ForgotPassword />} />
-        </Route>
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+          </Route>
+          <Route element={<RequireNoAuth />}>
+            <Route path="/login" element={<Login />} />
+            <Route path="/register" element={<Register />} />
+            <Route path="/forgot-password" element={<ForgotPassword />} />
+          </Route>
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </NotificationPreferencesProvider>
     </AuthProvider>
   )
 }

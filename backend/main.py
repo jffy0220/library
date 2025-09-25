@@ -941,6 +941,9 @@ def create_report_for_content(content_type: str, content_id: int, reporter: User
     return report
 
 from backend.app.routes.notifications import router as notifications_router
+from backend.app.routes.user_preferences import (
+    router as notification_preferences_router,
+)
 from backend.digests import (
     get_digest_metrics,
     shutdown_digest_scheduler,
@@ -961,6 +964,7 @@ app.add_middleware(
 )
 
 app.include_router(notifications_router)
+app.include_router(notification_preferences_router)
 
 @app.post("/api/auth/register", response_model=RegisterResponse, status_code=status.HTTP_201_CREATED)
 def register(payload: RegisterRequest, background_tasks: BackgroundTasks):
