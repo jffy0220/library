@@ -121,6 +121,13 @@ export default function Navbar() {
                   >
                     Groups
                   </Link>
+                  <Link
+                    className="btn btn-sm btn-outline-light"
+                    to="/messages"
+                    title={'View your direct messages'}
+                  >
+                    Messages
+                  </Link>
                   <Link className="btn btn-sm btn-primary" to="/new">
                     Share snippet
                   </Link>

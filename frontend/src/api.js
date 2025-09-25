@@ -163,6 +163,34 @@ export async function updateNotificationPreferences(payload) {
   return data
 }
 
+export async function startDirectMessage(payload) {
+  const { data } = await api.post('/dm/start', payload)
+  return data
+}
+
+export async function listDirectMessageThreads() {
+  const { data } = await api.get('/dm/threads')
+  return data
+}
+
+export async function listDirectMessageThreadMessages(threadId, params = {}) {
+  const query = {}
+  if (params.cursor) query.cursor = params.cursor
+  if (params.limit) query.limit = params.limit
+  const { data } = await api.get(`/dm/threads/${threadId}/messages`, { params: query })
+  return data
+}
+
+export async function sendDirectMessage(threadId, payload) {
+  const { data } = await api.post(`/dm/threads/${threadId}/messages`, payload)
+  return data
+}
+
+export async function markDirectMessageThreadRead(threadId) {
+  const { data } = await api.post(`/dm/threads/${threadId}/read`)
+  return data
+}
+
 export async function discoverGroups(params = {}) {
   const query = new URLSearchParams()
   if (params.q) query.set('q', params.q)

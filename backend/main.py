@@ -940,6 +940,7 @@ def create_report_for_content(content_type: str, content_id: int, reporter: User
         raise HTTPException(status_code=500, detail="Unable to load report")
     return report
 
+from backend.app.routes.direct_messages import router as direct_messages_router
 from backend.app.routes.notifications import router as notifications_router
 from backend.app.routes.user_preferences import (
     router as notification_preferences_router,
@@ -963,6 +964,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(direct_messages_router)
 app.include_router(notifications_router)
 app.include_router(notification_preferences_router)
 
