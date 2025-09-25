@@ -53,6 +53,24 @@ router = APIRouter(prefix="/api/groups", tags=["groups"])
 INVITE_DEFAULT_HOURS = 24 * 7
 INVITE_MAX_HOURS = 24 * 30
 
+def _normalize_visibility_filter(value: Optional[str]) -> List[str]:
+    if value is None:
+        return ["public"]
+
+    normalized: List[str] = []
+    for raw in value.split(","):
+        option = raw.strip().lower()
+        if not option:
+            continue
+        if option not in GROUP_PRIVACY_VALUES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid visibility filter",
+            )
+        if option not in normalized:
+            normalized.append(option)
+
+    return normalized or ["public"]
 
 class GroupCreate(BaseModel):
     slug: constr(strip_whitespace=True, min_length=3, max_length=80)
@@ -111,6 +129,11 @@ class InviteOut(BaseModel):
     status: str
     expires_utc: Optional[datetime]
 
+class GroupListResponse(BaseModel):
+    items: List[GroupOut]
+    total: int
+    page: int
+    limit: int
 
 def _normalize_privacy_state(value: Optional[str]) -> str:
     normalized = (value or "public").strip().lower()
@@ -199,6 +222,62 @@ def _validate_role(role: str) -> str:
 def _generate_invite_code() -> str:
     return secrets.token_urlsafe(16)
 
+
+@router.get("/", response_model=GroupListResponse)
+def list_groups(
+    q: Optional[str] = Query(default=None, alias="q"),
+    visibility: Optional[str] = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=100),
+    page: int = Query(default=1, ge=1),
+    current_user: Optional[Any] = Depends(app_context.get_optional_current_user),
+):
+    normalized_visibility = _normalize_visibility_filter(visibility)
+
+    if "private" in normalized_visibility:
+        can_view_private = bool(current_user and (is_site_moderator(current_user) or is_site_admin(current_user)))
+        if not can_view_private:
+            normalized_visibility = [item for item in normalized_visibility if item != "private"]
+
+    if not normalized_visibility:
+        return GroupListResponse(items=[], total=0, page=page, limit=limit)
+
+    with app_context.get_conn() as conn:
+        params: List[Any] = []
+        where_clauses: List[str] = []
+
+        placeholders = ", ".join(["%s"] * len(normalized_visibility))
+        where_clauses.append(f"privacy_state IN ({placeholders})")
+        params.extend(normalized_visibility)
+
+        search = (q or "").strip()
+        if search:
+            where_clauses.append("(LOWER(name) LIKE %s OR LOWER(description) LIKE %s)")
+            pattern = f"%{search.lower()}%"
+            params.extend([pattern, pattern])
+
+        where_sql = ""
+        if where_clauses:
+            where_sql = " WHERE " + " AND ".join(where_clauses)
+
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT COUNT(*) FROM groups{where_sql}", params)
+            total = cur.fetchone()[0]
+
+        offset = (page - 1) * limit
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            cur.execute(
+                f"""
+                SELECT id, slug, name, description, privacy_state, invite_only, created_by_user_id, created_utc
+                FROM groups{where_sql}
+                ORDER BY LOWER(name)
+                LIMIT %s OFFSET %s
+                """,
+                (*params, limit, offset),
+            )
+            rows = cur.fetchall()
+
+    items = [GroupOut(**dict(row)) for row in rows]
+    return GroupListResponse(items=items, total=total, page=page, limit=limit)
 
 @router.post("/", response_model=GroupOut, status_code=status.HTTP_201_CREATED)
 def create_group(payload: GroupCreate, current_user: Any = Depends(app_context.get_current_user)):
