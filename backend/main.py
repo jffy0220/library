@@ -27,18 +27,18 @@ import time
 
 from backend.app.schemas.notifications import NotificationCreate, NotificationType
 try:
-    from backend.email_service.providers import (
-        EmailProvider,
+    from backend.app.email import (
         EmailConfig,
+        EmailProvider,
         create_email_provider,
         load_email_config,
     )
 except ModuleNotFoundError as exc:
     if exc.name != "backend":
         raise
-    from email_service.providers import (  # type: ignore[no-redef]
-        EmailProvider,
+    from app.email import (  # type: ignore[no-redef]
         EmailConfig,
+        EmailProvider,
         create_email_provider,
         load_email_config,
     )
@@ -84,7 +84,7 @@ ONBOARDING_TOKEN_TTL_MINUTES = int(os.getenv("ONBOARDING_TOKEN_TTL_MINUTES", str
 PASSWORD_RESET_TOKEN_TTL_MINUTES = int(os.getenv("PASSWORD_RESET_TOKEN_TTL_MINUTES", "60"))
 AUTH_TOKEN_BYTES = int(os.getenv("AUTH_TOKEN_BYTES", "32"))
 EMAIL_CONFIG: EmailConfig = load_email_config()
-EMAIL_SENDER = EMAIL_CONFIG.sender
+EMAIL_SENDER = EMAIL_CONFIG.from_email
 
 _email_provider: EmailProvider = create_email_provider(EMAIL_CONFIG)
 
@@ -229,12 +229,6 @@ def issue_password_reset_token(user_id: int, email: Optional[str]) -> Tuple[str,
 
 def send_onboarding_email(email: str, username: str, token: str, expires_at: datetime) -> None:
     provider = get_email_provider()
-    metadata = {
-        "token": token,
-        "username": username,
-        "expires_at": expires_at.isoformat(),
-        "email_type": "onboarding",
-    }
     log_context = {
         **provider.describe(),
         "email_sender": EMAIL_SENDER,
@@ -249,21 +243,23 @@ def send_onboarding_email(email: str, username: str, token: str, expires_at: dat
         extra={**log_context, "email_event": "onboarding.dispatch.start"},
     )
     subject = "Welcome to the Library"
-    body = (
+    text_body = (
         f"Hello {username},\n\n"
         "Thanks for signing up for the Library app. "
         "Use the verification token below to finish creating your account:\n\n"
         f"{token}\n\n"
         f"The token expires at {expires_at.isoformat()}.\n"
     )
+    html_body = (
+        "<!DOCTYPE html><html><body style=\"font-family: Arial, sans-serif; line-height: 1.5; color: #0f172a;\">"
+        f"<p>Hello {username},</p>"
+        "<p>Thanks for signing up for the Library app. Use the verification token below to finish creating your account.</p>"
+        f"<p style=\"font-size: 1.25em; font-weight: bold; letter-spacing: 0.05em;\">{token}</p>"
+        f"<p>The token expires at {expires_at.isoformat()}.</p>"
+        "</body></html>"
+    )
     try:
-        provider.send_email(
-            sender=EMAIL_SENDER,
-            recipient=email,
-            subject=subject,
-            body=body,
-            metadata=metadata,
-        )
+        provider.send_email(email, subject, html_body, text_body)
     except Exception:
         logger.exception(
             "Failed to send onboarding email",
@@ -280,12 +276,6 @@ def send_password_reset_email(
     email: str, username: str, token: str, expires_at: datetime
 ) -> None:
     provider = get_email_provider()
-    metadata = {
-        "token": token,
-        "username": username,
-        "expires_at": expires_at.isoformat(),
-        "email_type": "password_reset",
-    }
     log_context = {
         **provider.describe(),
         "email_sender": EMAIL_SENDER,
@@ -300,7 +290,7 @@ def send_password_reset_email(
         extra={**log_context, "email_event": "password_reset.dispatch.start"},
     )
     subject = "Reset your Library password"
-    body = (
+    text_body = (
         f"Hello {username},\n\n"
         "A password reset was requested for your Library account. "
         "Use the token below to proceed:\n\n"
@@ -308,14 +298,17 @@ def send_password_reset_email(
         f"This token expires at {expires_at.isoformat()}.\n"
         "If you did not request a reset you can ignore this message.\n"
     )
+    html_body = (
+        "<!DOCTYPE html><html><body style=\"font-family: Arial, sans-serif; line-height: 1.5; color: #0f172a;\">"
+        f"<p>Hello {username},</p>"
+        "<p>A password reset was requested for your Library account. Use the token below to proceed.</p>"
+        f"<p style=\"font-size: 1.25em; font-weight: bold; letter-spacing: 0.05em;\">{token}</p>"
+        f"<p>This token expires at {expires_at.isoformat()}.</p>"
+        "<p>If you did not request a reset you can ignore this message.</p>"
+        "</body></html>"
+    )
     try:
-        provider.send_email(
-            sender=EMAIL_SENDER,
-            recipient=email,
-            subject=subject,
-            body=body,
-            metadata=metadata,
-        )
+        provider.send_email(email, subject, html_body, text_body)
     except Exception:
         logger.exception(
             "Failed to send password reset email",

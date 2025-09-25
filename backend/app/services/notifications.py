@@ -2,20 +2,25 @@ from __future__ import annotations
 
 import base64
 import json
+import html
+import logging
+import time
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Any, List, Mapping, Optional, Sequence, Tuple
+from textwrap import shorten
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from urllib.parse import urljoin
 
 import psycopg2
 import psycopg2.extras
 from psycopg2.extensions import connection as PgConnection
 
 try:
-    from backend.main import get_conn
+    from backend.main import EMAIL_CONFIG, get_conn, get_email_provider
 except ModuleNotFoundError as exc:  # pragma: no cover - fallback for local execution
     if exc.name != "backend":
         raise
-    from main import get_conn  # type: ignore[no-redef]
+    from main import EMAIL_CONFIG, get_conn, get_email_provider  # type: ignore[no-redef]
 
 from ..schemas.notifications import (
     EmailDigestOption,
@@ -26,6 +31,10 @@ from ..schemas.notifications import (
     NotificationPreferencesUpdate,
     NotificationType,
 )
+
+from ..email import render_reply_notification
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_PAGE_SIZE = 20
 MAX_PAGE_SIZE = 100
@@ -39,6 +48,168 @@ _PREFERENCE_COLUMNS = (
     "system",
     "email_digest",
 )
+
+def _format_snippet_title(row: Mapping[str, Any]) -> Optional[str]:
+    title = (row.get("book_name") or "").strip()
+    return title or None
+
+
+def _build_snippet_excerpt(row: Mapping[str, Any]) -> Optional[str]:
+    candidate = (row.get("text_snippet") or "").strip()
+    if not candidate:
+        candidate = (row.get("thoughts") or "").strip()
+    if not candidate:
+        return None
+    normalized = " ".join(candidate.split())
+    return shorten(normalized, width=400, placeholder="…")
+
+
+def _compose_comment_context(
+    connection: PgConnection,
+    notification: Notification,
+) -> Optional[Dict[str, Any]]:
+    if not notification.comment_id or not notification.snippet_id:
+        return None
+
+    with connection.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """
+            SELECT
+                c.content AS comment_content,
+                c.created_utc AS comment_created_at,
+                c.snippet_id,
+                u.username AS actor_username,
+                s.book_name,
+                s.text_snippet,
+                s.thoughts
+            FROM comments c
+            JOIN snippets s ON s.id = c.snippet_id
+            LEFT JOIN users u ON u.id = c.user_id
+            WHERE c.id = %s
+            LIMIT 1
+            """,
+            (notification.comment_id,),
+        )
+        comment_row = cur.fetchone()
+
+    if not comment_row:
+        return None
+
+    with connection.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            "SELECT email, username FROM users WHERE id = %s",
+            (notification.user_id,),
+        )
+        recipient_row = cur.fetchone()
+
+    if not recipient_row or not recipient_row.get("email"):
+        return None
+
+    base_url = EMAIL_CONFIG.app_base_url.rstrip("/") + "/"
+    snippet_path = f"snippet/{notification.snippet_id}"
+    snippet_url = urljoin(base_url, snippet_path)
+    comment_url = f"{snippet_url}#comment-{notification.comment_id}"
+
+    actor_name = comment_row.get("actor_username") or "Someone"
+    recipient_name = recipient_row.get("username") or "there"
+    comment_content = (comment_row.get("comment_content") or "").strip()
+    comment_content_html = html.escape(comment_content).replace("\n", "<br />")
+
+    snippet_title = _format_snippet_title(comment_row)
+    snippet_excerpt = _build_snippet_excerpt(comment_row)
+    if snippet_excerpt:
+        snippet_excerpt_text = f"Snippet excerpt:\n{snippet_excerpt}\n\n"
+        snippet_excerpt_html = (
+            "<hr style=\"border: none; border-top: 1px solid #e2e8f0; margin: 1.5em 0;\" />"
+            "<p style=\"margin-bottom: 0.5em; font-weight: bold;\">Snippet excerpt</p>"
+            f"<p>{html.escape(snippet_excerpt).replace('\n', '<br />')}</p>"
+        )
+    else:
+        snippet_excerpt_text = ""
+        snippet_excerpt_html = ""
+
+    return {
+        "recipient_email": recipient_row["email"],
+        "recipient_name": recipient_name,
+        "actor_name": actor_name,
+        "comment_content": comment_content,
+        "comment_content_html": comment_content_html,
+        "snippet_title_suffix": f" about {snippet_title}" if snippet_title else "",
+        "snippet_title_suffix_html": (
+            f" about <strong>{html.escape(snippet_title)}</strong>" if snippet_title else ""
+        ),
+        "snippet_excerpt_text_block": snippet_excerpt_text,
+        "snippet_excerpt_html_block": snippet_excerpt_html,
+        "snippet_url": snippet_url,
+        "comment_url": comment_url,
+    }
+
+
+def _send_reply_notification_email(
+    notification: Notification, context: Dict[str, Any]
+) -> None:
+    provider = get_email_provider()
+    subject, text_body, html_body = render_reply_notification(notification.type, context)
+    attempts = max(1, EMAIL_CONFIG.max_attempts)
+    backoff = max(0.0, EMAIL_CONFIG.backoff_seconds)
+    recipient = context["recipient_email"]
+
+    for attempt in range(1, attempts + 1):
+        try:
+            provider.send_email(recipient, subject, html_body, text_body)
+        except Exception:
+            logger.exception(
+                "Failed to send reply notification email",
+                extra={
+                    "notification_id": notification.id,
+                    "email_recipient": recipient,
+                    "email_attempt": attempt,
+                    "email_attempts": attempts,
+                },
+            )
+            if attempt >= attempts:
+                break
+            if backoff > 0:
+                time.sleep(backoff * attempt)
+            continue
+
+        logger.info(
+            "Reply notification email dispatched",
+            extra={
+                "notification_id": notification.id,
+                "email_recipient": recipient,
+                "email_provider": provider.describe(),
+            },
+        )
+        break
+
+
+def _maybe_send_reply_email(
+    notification: Notification,
+    connection: PgConnection,
+) -> None:
+    preference_field = _EMAIL_PREFERENCE_MAP.get(notification.type)
+    if not preference_field:
+        return
+
+    try:
+        preferences = get_preferences(notification.user_id, conn=connection)
+    except Exception:
+        logger.exception(
+            "Failed to load notification preferences for email delivery",
+            extra={"notification_id": notification.id},
+        )
+        return
+
+    if not getattr(preferences, preference_field):
+        return
+
+    context = _compose_comment_context(connection, notification)
+    if not context:
+        return
+
+    _send_reply_notification_email(notification, context)
+
 
 
 @contextmanager
@@ -136,7 +307,18 @@ def create_notification(
             row = cur.fetchone()
     if row is None:
         raise RuntimeError("Failed to insert notification")
-    return _coerce_notification(row)
+    notification = _coerce_notification(row)
+
+    with _ensure_connection(conn) as connection:
+        try:
+            _maybe_send_reply_email(notification, connection)
+        except Exception:
+            logger.exception(
+                "Unexpected error while sending reply email",
+                extra={"notification_id": notification.id},
+            )
+
+    return notification
 
 
 def list_notifications(
@@ -347,3 +529,7 @@ __all__ = [
     "NotificationPreferencesUpdate",
     "EmailDigestOption",
 ]
+_EMAIL_PREFERENCE_MAP: Dict[NotificationType, str] = {
+    NotificationType.REPLY_TO_SNIPPET: "reply_to_snippet",
+    NotificationType.REPLY_TO_COMMENT: "reply_to_comment",
+}

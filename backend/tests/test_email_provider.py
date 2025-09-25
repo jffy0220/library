@@ -20,55 +20,57 @@ def _patched_version(distribution_name: str) -> str:
 
 importlib.metadata.version = _patched_version  # type: ignore[assignment]
 
-from backend.email_service.providers import (
+from backend.app.email import (  # noqa: E402  pylint: disable=wrong-import-position
+    DevPrintProvider,
     EmailProvider,
     SMTPProvider,
-    SendGridProvider,
     create_email_provider,
     load_email_config,
 )
-from backend import main as backend_main
+from backend import main as backend_main  # noqa: E402  pylint: disable=wrong-import-positio
 
 
 class _FailingProvider(EmailProvider):
     name = "failing"
 
     def __init__(self, exc: Exception) -> None:
-        super().__init__()
+        super().__init__(from_email="noreply@example.com")
         self._exc = exc
 
     def send_email(
         self,
-        *,
-        sender: str,
-        recipient: str,
+        to: str,
         subject: str,
-        body: str,
-        metadata=None,
+        html_body: str,
+        text_body: str,
     ) -> None:  # type: ignore[override]
         raise self._exc
 
 
-def test_default_provider_is_smtp():
+def test_default_provider_is_dev_print():
     config = load_email_config(env={})
     provider = create_email_provider(config)
-    assert isinstance(provider, SMTPProvider)
-    assert provider.host == "localhost"
-    assert provider.port == 25
+    assert isinstance(provider, DevPrintProvider)
+    assert provider.from_email == "noreply@example.com"
 
 
-def test_sendgrid_provider_requires_api_key():
+def test_smtp_provider_configuration():
     config = load_email_config(
         env={
-            "EMAIL_PROVIDER": "sendgrid",
-            "SENDGRID_API_KEY": "sg.test-key",
-            "EMAIL_RATE_LIMIT_PER_MINUTE": "42",
+            "EMAIL_PROVIDER": "smtp",
+            "SMTP_HOST": "mail.example.com",
+            "SMTP_PORT": "2525",
+            "SMTP_USER": "mailer",
+            "SMTP_PASS": "secret",
+            "FROM_EMAIL": "notifications@example.com",
         }
     )
     provider = create_email_provider(config)
-    assert isinstance(provider, SendGridProvider)
-    assert provider.api_key == "sg.test-key"
-    assert provider.rate_limit_per_minute == 42
+    assert isinstance(provider, SMTPProvider)
+    assert provider.host == "mail.example.com"
+    assert provider.port == 2525
+    assert provider.username == "mailer"
+    assert provider.from_email == "notifications@example.com"
 
 
 def test_email_send_errors_propagate():

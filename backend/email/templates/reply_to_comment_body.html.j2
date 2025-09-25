@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html>
+  <body style="font-family: Arial, sans-serif; line-height: 1.5; color: #0f172a;">
+    <p>Hi {{ recipient_name }},</p>
+    <p>
+      {{ actor_name }} just replied to your comment{{ snippet_title_suffix_html }}.
+    </p>
+    <blockquote style="margin: 1em 0; padding: 1em; background-color: #f8fafc; border-left: 4px solid #64748b;">
+      {{ comment_content_html }}
+    </blockquote>
+    <p>
+      <a href="{{ comment_url }}" style="color: #2563eb;">See the latest replies</a>
+    </p>
+    {{ snippet_excerpt_html_block }}
+    <p style="margin-top: 2em;">Keep reading,<br />The Library Team</p>
+  </body>
+</html>

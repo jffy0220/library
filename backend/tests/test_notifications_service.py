@@ -1,6 +1,7 @@
 import base64
 from datetime import datetime, timedelta, timezone
 
+from backend.app.email import EmailConfig, EmailProvider
 from backend.app.schemas.notifications import (
     EmailDigestOption,
     NotificationCreate,
@@ -205,3 +206,113 @@ def test_upsert_preferences_applies_updates():
     assert params["user_id"] == 10
     assert params["mention"] is False
     assert params["email_digest"] == EmailDigestOption.DAILY
+
+def test_reply_notification_sends_email(monkeypatch):
+    from backend import main as backend_main
+
+    sent_messages = []
+
+    class RecordingProvider(EmailProvider):
+        name = "recording"
+
+        def __init__(self) -> None:
+            super().__init__(from_email="noreply@example.com")
+
+        def send_email(
+            self,
+            to: str,
+            subject: str,
+            html_body: str,
+            text_body: str,
+        ) -> None:  # type: ignore[override]
+            sent_messages.append((to, subject, text_body, html_body))
+
+    notification_row = {
+        "id": 10,
+        "user_id": 7,
+        "type": NotificationType.REPLY_TO_SNIPPET.value,
+        "actor_user_id": 3,
+        "snippet_id": 22,
+        "comment_id": 301,
+        "title": None,
+        "body": None,
+        "is_read": False,
+        "created_at": datetime.now(timezone.utc),
+    }
+    comment_row = {
+        "comment_content": "Thanks for sharing this!",
+        "comment_created_at": datetime.now(timezone.utc),
+        "snippet_id": 22,
+        "actor_username": "Alice",
+        "book_name": "Great Book",
+        "text_snippet": "In the beginning...",
+        "thoughts": "",
+    }
+    recipient_row = {"email": "reader@example.com", "username": "Reader"}
+
+    insert_cursor = FakeCursor(fetchone_result=notification_row)
+    comment_cursor = FakeCursor(fetchone_result=comment_row)
+    recipient_cursor = FakeCursor(fetchone_result=recipient_row)
+    conn = FakeConnection(insert_cursor, comment_cursor, recipient_cursor)
+
+    original_provider = backend_main.get_email_provider()
+    original_config = backend_main.EMAIL_CONFIG
+    original_sender = backend_main.EMAIL_SENDER
+    original_notifications_config = notifications.EMAIL_CONFIG
+
+    backend_main.set_email_provider(RecordingProvider())
+
+    new_config = EmailConfig(
+        provider_name="dev",
+        from_email="noreply@example.com",
+        smtp_host="localhost",
+        smtp_port=587,
+        smtp_username=None,
+        smtp_password=None,
+        smtp_use_tls=True,
+        app_base_url="http://example.test/app",
+        max_attempts=1,
+        backoff_seconds=0.0,
+    )
+    backend_main.EMAIL_CONFIG = new_config
+    notifications.EMAIL_CONFIG = new_config
+    backend_main.EMAIL_SENDER = new_config.from_email
+
+    def fake_get_preferences(user_id, conn=None):  # noqa: ANN001
+        return NotificationPreferences(
+            userId=user_id,
+            replyToSnippet=True,
+            replyToComment=True,
+            mention=True,
+            voteOnYourSnippet=True,
+            moderationUpdate=True,
+            system=True,
+            emailDigest=EmailDigestOption.WEEKLY,
+        )
+
+    monkeypatch.setattr(notifications, "get_preferences", fake_get_preferences)
+    monkeypatch.setattr(notifications.time, "sleep", lambda *_args, **_kwargs: None)
+
+    event = NotificationCreate(
+        userId=notification_row["user_id"],
+        actorUserId=notification_row["actor_user_id"],
+        snippetId=notification_row["snippet_id"],
+        commentId=notification_row["comment_id"],
+        type=NotificationType.REPLY_TO_SNIPPET,
+    )
+
+    try:
+        created = notifications.create_notification(event, conn=conn)
+    finally:
+        backend_main.set_email_provider(original_provider)
+        backend_main.EMAIL_CONFIG = original_config
+        backend_main.EMAIL_SENDER = original_sender
+        notifications.EMAIL_CONFIG = original_notifications_config
+
+    assert created.id == notification_row["id"]
+    assert sent_messages, "Expected an email to be sent"
+    to, subject, text_body, html_body = sent_messages[0]
+    assert to == "reader@example.com"
+    assert "Alice" in subject
+    assert "Read" in text_body
+    assert "http://example.test/app/snippet/22" in html_body
