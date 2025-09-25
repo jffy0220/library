@@ -43,6 +43,7 @@ export default function ViewSnippet() {
   const [voting, setVoting] = useState({})
   const [snippetAlert, setSnippetAlert] = useState(null)
   const [commentAlert, setCommentAlert] = useState(null)
+  const [commentToast, setCommentToast] = useState(null)
 
   const [editingSnippet, setEditingSnippet] = useState(false)
   const [snippetForm, setSnippetForm] = useState(makeEmptySnippetForm)
@@ -136,6 +137,12 @@ export default function ViewSnippet() {
   }, [])
 
   useEffect(() => {
+    if (!commentToast) return undefined
+    const timeout = setTimeout(() => setCommentToast(null), 4000)
+    return () => clearTimeout(timeout)
+  }, [commentToast])
+
+  useEffect(() => {
     if (!row) {
       setSnippetGroupId(null)
       return
@@ -188,7 +195,8 @@ export default function ViewSnippet() {
       const newComment = await createSnippetComment(id, { content: trimmed })
       setCommentContent('')
       setComments((prev) => [newComment, ...prev])
-      setCommentAlert({ type: 'success', message: 'Comment posted.' })
+      setCommentAlert(null)
+      setCommentToast({ type: 'success', message: 'Comment posted.' })
     } catch (err) {
       console.error('Failed to post comment', err)
       setCommentAlert({ type: 'danger', message: 'Failed to post comment. Please try again.' })
@@ -380,7 +388,8 @@ export default function ViewSnippet() {
     try {
       const updated = await updateComment(editingCommentId, { content: trimmed })
       setComments((prev) => prev.map((item) => (item.id === editingCommentId ? updated : item)))
-      setCommentAlert({ type: 'success', message: 'Comment updated.' })
+      setCommentAlert(null)
+      setCommentToast({ type: 'success', message: 'Comment updated.' })
       handleCancelCommentEdit()
     } catch (err) {
       const detail = err?.response?.data?.detail
@@ -407,7 +416,8 @@ export default function ViewSnippet() {
         setCommentReportReason('')
         setCommentReportSubmitting(false)
       }
-      setCommentAlert({ type: 'success', message: 'Comment deleted.' })
+      setCommentAlert(null)
+      setCommentToast({ type: 'success', message: 'Comment deleted.' })
     } catch (err) {
       const detail = err?.response?.data?.detail
       setCommentAlert({ type: 'danger', message: detail || 'Failed to delete comment.' })
@@ -439,7 +449,11 @@ export default function ViewSnippet() {
     try {
       const reason = commentReportReason.trim()
       await reportComment(reportingCommentId, { reason: reason || null })
-      setCommentAlert({ type: 'success', message: 'Report submitted. Moderators will review it shortly.' })
+      setCommentAlert(null)
+      setCommentToast({
+        type: 'success',
+        message: 'Report submitted. Moderators will review it shortly.',
+      })
       setReportingCommentId(null)
       setCommentReportReason('')
     } catch (err) {
@@ -456,12 +470,21 @@ export default function ViewSnippet() {
   const canManageSnippet = user && (row.created_by_user_id === user.id || canModerate)
 
   const handleSnippetActionButton = editingSnippet ? handleSnippetEditCancel : handleSnippetEditStart
+  const handleDismissCommentToast = () => setCommentToast(null)
+  const commentToastVariant =
+    commentToast?.type === 'success'
+      ? 'success'
+      : commentToast?.type === 'danger'
+        ? 'danger'
+        : commentToast?.type === 'info'
+          ? 'info'
+          : 'primary'
 
   return (
     <div className="card shadow-sm">
       <div className="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
         <div className="d-flex align-items-center gap-2">
-          <span>Snippet #{row.id}</span>
+          <span className="fw-semibold">{row.book_name || 'Snippet details'}</span>
           {row.visibility === 'private' && (
             <span className="badge text-bg-warning">Private</span>
           )}
@@ -481,7 +504,7 @@ export default function ViewSnippet() {
           {canManageSnippet && (
             <button
               type="button"
-              className="btn btn-sm btn-outline-light text-dark border-dark"
+              className="btn btn-sm btn-outline-primary"
               onClick={handleSnippetActionButton}
               disabled={snippetSaving}
             >
@@ -501,6 +524,29 @@ export default function ViewSnippet() {
         </div>
       </div>
       <div className="card-body">
+        {commentToast && (
+          <div
+            className="toast-container position-fixed bottom-0 end-0 p-3"
+            style={{ zIndex: 1100 }}
+          >
+            <div
+              className={`toast text-bg-${commentToastVariant} show`}
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+            >
+              <div className="d-flex align-items-center">
+                <div className="toast-body">{commentToast.message}</div>
+                <button
+                  type="button"
+                  className="btn-close btn-close-white me-2 m-auto"
+                  aria-label="Close toast"
+                  onClick={handleDismissCommentToast}
+                />
+              </div>
+            </div>
+          </div>
+        )}
         {snippetAlert && (
           <div className={`alert alert-${snippetAlert.type}`}>
             {snippetAlert.message}
