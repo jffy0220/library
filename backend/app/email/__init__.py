@@ -1,7 +1,7 @@
 """Compatibility layer exposing email utilities within the application package."""
 
-from ...email.config import EmailConfig, load_email_config
-from ...email.providers import (
+from ...mail.config import EmailConfig, load_email_config
+from ...mail.providers import (
     DevPrintProvider,
     EmailProvider,
     SESProvider,
@@ -9,7 +9,7 @@ from ...email.providers import (
     SendGridProvider,
     create_email_provider,
 )
-from ...email.renderer import render_email_digest, render_reply_notification
+from ...mail.renderer import render_email_digest, render_reply_notification
 
 __all__ = [
     "DevPrintProvider",

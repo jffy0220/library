@@ -50,7 +50,7 @@ def _ensure_dependencies() -> None:
     if _get_conn is None or _get_email_provider is None:
         raise RuntimeError("Backend dependencies are not configured")
 
-from ...email.renderer import render_email_digest
+from ...mail.renderer import render_email_digest
 
 logger = logging.getLogger(__name__)
 
