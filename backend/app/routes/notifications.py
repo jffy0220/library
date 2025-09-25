@@ -1,12 +1,11 @@
 """API routes for notification interactions."""
 from __future__ import annotations
 
-from typing import Optional
-
+import os
 from functools import lru_cache
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Cookie, Depends, Query
 
 from ..schemas.notifications import (
     NotificationListResponse,
@@ -14,6 +13,9 @@ from ..schemas.notifications import (
     NotificationMarkReadResponse,
     NotificationUnreadCount,
 )
+
+_SESSION_COOKIE_NAME = os.getenv("SESSION_COOKIE_NAME", "session")
+
 
 def _resolve_get_current_user() -> Callable[..., Any]:  # pragma: no cover - helper for lazy import
     try:
@@ -28,10 +30,11 @@ def _resolve_get_current_user() -> Callable[..., Any]:  # pragma: no cover - hel
 @lru_cache(maxsize=1)
 def _get_current_user_callable() -> Callable[..., Any]:
     return _resolve_get_current_user()
-
-
-def _get_current_user(*args: Any, **kwargs: Any):
-    return _get_current_user_callable()(*args, **kwargs)
+def _get_current_user(
+    session_token: Optional[str] = Cookie(None, alias=_SESSION_COOKIE_NAME),
+) -> Any:
+    resolved = _get_current_user_callable()
+    return resolved(session_token=session_token)
 
 _DEFAULT_PAGE_SIZE = 20
 _MAX_PAGE_SIZE = 100
