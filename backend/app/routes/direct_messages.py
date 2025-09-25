@@ -1,7 +1,8 @@
+import os
 from functools import lru_cache
 from typing import Any, Callable, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Query
 
 from ..schemas.direct_messages import (
     DirectMessageList,
@@ -29,8 +30,14 @@ def _get_current_user_callable() -> Callable[..., Any]:
     return _resolve_get_current_user()
 
 
-def _get_current_user(*args: Any, **kwargs: Any):
-    return _get_current_user_callable()(*args, **kwargs)
+_SESSION_COOKIE_NAME = os.getenv("SESSION_COOKIE_NAME", "session")
+
+
+def _get_current_user(
+    session_token: Optional[str] = Cookie(None, alias=_SESSION_COOKIE_NAME),
+):
+    resolved = _get_current_user_callable()
+    return resolved(session_token=session_token)
 
 
 router = APIRouter(prefix="/api/dm", tags=["direct-messages"])
