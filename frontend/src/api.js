@@ -191,32 +191,88 @@ export async function markDirectMessageThreadRead(threadId) {
   return data
 }
 
-export async function discoverGroups(params = {}) {
+const GROUP_DISCOVERY_RETRY_STATUSES = new Set([400, 404, 422])
+
+function buildGroupDiscoveryQuery(params, { visibilityEncoding = 'repeat' } = {}) {
   const query = new URLSearchParams()
-  if (params.q) query.set('q', params.q)
-  if (params.visibility) {
-    const rawValues = Array.isArray(params.visibility)
+
+  if (params.q) {
+    query.set('q', params.q)
+  }
+
+  const visibilityValues = (() => {
+    if (!params.visibility) {
+      return []
+    }
+    const raw = Array.isArray(params.visibility)
       ? params.visibility
       : String(params.visibility)
           .split(',')
           .map((value) => value.trim())
-    rawValues.filter(Boolean).forEach((value) => {
-      query.append('visibility', value)
+    const deduped = []
+    raw.forEach((value) => {
+      const normalized = (value || '').trim()
+      if (normalized && !deduped.includes(normalized)) {
+        deduped.push(normalized)
+      }
     })
-  }
-  if (params.limit) query.set('limit', params.limit)
-  if (params.page) query.set('page', params.page)
-  const config = [...query.keys()].length > 0 ? { params: query } : undefined
-  try {
-    const { data } = await api.get('/groups', config)
-    return data
-  } catch (err) {
-    if (err?.response?.status === 404) {
-      const { data } = await api.get('/groups/discover', config)
-      return data
+    return deduped
+  })()
+
+  if (visibilityValues.length > 0) {
+    if (visibilityEncoding === 'comma') {
+      query.set('visibility', visibilityValues.join(','))
+    } else {
+      visibilityValues.forEach((value) => {
+        query.append('visibility', value)
+      })
     }
-    throw err
   }
+
+  if (params.limit) {
+    query.set('limit', params.limit)
+  }
+  if (params.page) {
+    query.set('page', params.page)
+  }
+
+  return query
+}
+
+async function requestGroupDiscovery(endpoint, query) {
+  const config = [...query.keys()].length > 0 ? { params: query } : undefined
+  const { data } = await api.get(endpoint, config)
+  return data
+}
+
+export async function discoverGroups(params = {}) {
+  const attempts = [
+    { endpoint: '/groups', visibilityEncoding: 'repeat' },
+    { endpoint: '/groups', visibilityEncoding: 'comma' },
+    { endpoint: '/groups/discover', visibilityEncoding: 'repeat' },
+    { endpoint: '/groups/discover', visibilityEncoding: 'comma' },
+  ]
+
+  let lastError = null
+
+  for (const attempt of attempts) {
+    const query = buildGroupDiscoveryQuery(params, { visibilityEncoding: attempt.visibilityEncoding })
+    try {
+      return await requestGroupDiscovery(attempt.endpoint, query)
+    } catch (error) {
+      const status = error?.response?.status
+      lastError = error
+      if (!GROUP_DISCOVERY_RETRY_STATUSES.has(status)) {
+        throw error
+      }
+    }
+  }
+
+  if (lastError) {
+    throw lastError
+  }
+
+  return []
 }
 
 export async function getGroup(groupId) {
