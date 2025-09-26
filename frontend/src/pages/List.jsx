@@ -201,37 +201,39 @@ export default function List() {
         </div>
       )}
 
-      <section className="home-hero">
-        <div className="home-hero__content">
-          <h1 className="home-hero__headline">Collect the lines worth remembering</h1>
-          <p className="home-hero__lead">
-            Build a feed inspired by your favorite communities on Facebook, X, and Reddit. Follow what the
-            library is reading, remix tags, and bring new color to the conversation.
-          </p>
-          <div className="home-hero__actions">
-            <Link className="btn btn-primary" to={user ? '/new' : '/register'}>
-              {user ? 'Share a snippet' : 'Join the library'}
-            </Link>
-            <Link className="btn btn-outline-light" to={user ? '/groups' : '/login'}>
-              {user ? 'Browse your groups' : 'Preview the feed'}
-            </Link>
+      {!user && (
+        <section className="home-hero">
+          <div className="home-hero__content">
+            <h1 className="home-hero__headline">Collect the lines worth remembering</h1>
+            <p className="home-hero__lead">
+              Build a feed inspired by your favorite communities on Facebook, X, and Reddit. Follow what the
+              library is reading, remix tags, and bring new color to the conversation.
+            </p>
+            <div className="home-hero__actions">
+              <Link className="btn btn-primary" to={user ? '/new' : '/register'}>
+                {user ? 'Share a snippet' : 'Join the library'}
+              </Link>
+              <Link className="btn btn-outline-light" to={user ? '/groups' : '/login'}>
+                {user ? 'Browse your groups' : 'Preview the feed'}
+              </Link>
+            </div>
           </div>
-        </div>
-        <div className="home-hero__stats">
-          <div className="stat-tile">
-            <span className="stat-value">{totalCount.toLocaleString()}</span>
-            <span className="stat-label">Snippets indexed</span>
+          <div className="home-hero__stats">
+            <div className="stat-tile">
+              <span className="stat-value">{totalCount.toLocaleString()}</span>
+              <span className="stat-label">Snippets indexed</span>
+            </div>
+            <div className="stat-tile">
+              <span className="stat-value">{popularTags.length}</span>
+              <span className="stat-label">Trending tags this week</span>
+            </div>
+            <div className="stat-tile">
+              <span className="stat-value">{trendingCommentTotal.toLocaleString()}</span>
+              <span className="stat-label">Fresh comments</span>
+            </div>
           </div>
-          <div className="stat-tile">
-            <span className="stat-value">{popularTags.length}</span>
-            <span className="stat-label">Trending tags this week</span>
-          </div>
-          <div className="stat-tile">
-            <span className="stat-value">{trendingCommentTotal.toLocaleString()}</span>
-            <span className="stat-label">Fresh comments</span>
-          </div>
-        </div>
-      </section>
+        </section>
+      )}
 
       <div className="home-layout">
         <div className="home-layout__main d-flex flex-column gap-4">
