@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { discoverGroups } from '../../api'
 
 const PRIVACY_DESCRIPTIONS = {
-  public: 'Disccoverable by everyone in the library. Join to see member posts',
+  public: 'Discoverable by everyone in the library. Join to see member posts',
   unlisted: 'Hidden from discovery, but accessible to anyone with the link.',
   private: 'Only members can view posts and discussions.',
 }
@@ -37,7 +37,7 @@ export default function GroupDiscover() {
     try {
       const data = await discoverGroups({
         q: options.query ?? (query || undefined),
-        visibility: 'public,unlisted',
+        visibility: ['public', 'unlisted'],
         limit: 50,
       })
       const items = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : []

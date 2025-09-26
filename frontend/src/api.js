@@ -194,7 +194,16 @@ export async function markDirectMessageThreadRead(threadId) {
 export async function discoverGroups(params = {}) {
   const query = new URLSearchParams()
   if (params.q) query.set('q', params.q)
-  if (params.visibility) query.set('visibility', params.visibility)
+  if (params.visibility) {
+    const rawValues = Array.isArray(params.visibility)
+      ? params.visibility
+      : String(params.visibility)
+          .split(',')
+          .map((value) => value.trim())
+    rawValues.filter(Boolean).forEach((value) => {
+      query.append('visibility', value)
+    })
+  }
   if (params.limit) query.set('limit', params.limit)
   if (params.page) query.set('page', params.page)
   const config = [...query.keys()].length > 0 ? { params: query } : undefined
