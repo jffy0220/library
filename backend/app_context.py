@@ -1,6 +1,7 @@
 """Shared application context for reusable dependencies."""
 from __future__ import annotations
 
+import inspect
 from typing import Any, Callable, Dict, List, Optional
 
 _get_conn: Optional[Callable[[], Any]] = None
@@ -26,6 +27,9 @@ def configure(
 ) -> None:
     """Register application-wide dependencies required by modular routers."""
 
+    wrapper_get_current_user = globals()["get_current_user"]
+    wrapper_get_optional_current_user = globals()["get_optional_current_user"]
+
     global _get_conn
     global _get_current_user
     global _get_optional_current_user
@@ -44,6 +48,10 @@ def configure(
     _comment_model = comment_model
     _fetch_tags_for_snippets = fetch_tags_for_snippets
 
+    wrapper_get_current_user.__signature__ = inspect.signature(get_current_user)  # type: ignore[attr-defined]
+    wrapper_get_optional_current_user.__signature__ = inspect.signature(
+        get_optional_current_user
+    )  # type: ignore[attr-defined]
 
 def _require(value: Optional[Any], name: str) -> Any:
     if value is None:
