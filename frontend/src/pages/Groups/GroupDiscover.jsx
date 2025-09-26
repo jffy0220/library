@@ -45,7 +45,27 @@ export default function GroupDiscover() {
     } catch (err) {
       console.error('Failed to load groups', err)
       const detail = err?.response?.data?.detail
-      setError(detail || 'Unable to load groups right now.')
+      let message = 'Unable to load groups right now.'
+      if (detail) {
+        if (typeof detail === 'string') {
+          message = detail
+        } else if (Array.isArray(detail)) {
+          const parts = detail
+            .map((item) => {
+              if (!item) return null
+              if (typeof item === 'string') return item
+              if (typeof item === 'object') return item.msg || item.detail || null
+              return null
+            })
+            .filter(Boolean)
+          if (parts.length > 0) {
+            message = parts.join(' ')
+          }
+        } else if (typeof detail === 'object') {
+          message = detail.msg || detail.detail || message
+        }
+      }
+      setError(message)
       setGroups([])
     } finally {
       setLoading(false)

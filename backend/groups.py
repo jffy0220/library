@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import secrets
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence, Union
 
 import psycopg2
 import psycopg2.extras
@@ -53,22 +53,33 @@ router = APIRouter(prefix="/api/groups", tags=["groups"])
 INVITE_DEFAULT_HOURS = 24 * 7
 INVITE_MAX_HOURS = 24 * 30
 
-def _normalize_visibility_filter(value: Optional[str]) -> List[str]:
+def _normalize_visibility_filter(value: Optional[Union[str, Sequence[str]]]) -> List[str]:
     if value is None:
         return ["public"]
 
+    if isinstance(value, str):
+        raw_values: Sequence[str] = [value]
+    else:
+        raw_values = value
+
     normalized: List[str] = []
-    for raw in value.split(","):
-        option = raw.strip().lower()
-        if not option:
-            continue
-        if option not in GROUP_PRIVACY_VALUES:
+    for raw in raw_values:
+        if not isinstance(raw, str):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid visibility filter",
             )
-        if option not in normalized:
-            normalized.append(option)
+        for fragment in raw.split(","):
+            option = fragment.strip().lower()
+            if not option:
+                continue
+            if option not in GROUP_PRIVACY_VALUES:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid visibility filter",
+                )
+            if option not in normalized:
+                normalized.append(option)
 
     return normalized or ["public"]
 
@@ -226,7 +237,7 @@ def _generate_invite_code() -> str:
 @router.get("/", response_model=GroupListResponse)
 def list_groups(
     q: Optional[str] = Query(default=None, alias="q"),
-    visibility: Optional[str] = Query(default=None),
+    visibility: Optional[Union[str, List[str]]] = Query(default=None),
     limit: int = Query(default=20, ge=1, le=100),
     page: int = Query(default=1, ge=1),
     current_user: Optional[Any] = Depends(app_context.get_optional_current_user),
