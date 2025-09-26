@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import secrets
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence, Union
 
 import psycopg2
 import psycopg2.extras
@@ -210,7 +210,7 @@ def _generate_invite_code() -> str:
 def list_groups(
     request: Request,
     q: Optional[str] = Query(default=None, alias="q"),
-    visibility: Optional[List[str]] = Query(default=None),
+    visibility: Optional[Union[str, Sequence[str]]] = Query(default=None),
     limit: int = Query(default=20, ge=1, le=100),
     page: int = Query(default=1, ge=1),
     current_user: Optional[Any] = Depends(app_context.get_optional_current_user),
