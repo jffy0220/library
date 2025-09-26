@@ -210,7 +210,7 @@ def _generate_invite_code() -> str:
 def list_groups(
     request: Request,
     q: Optional[str] = Query(default=None, alias="q"),
-    visibility: Optional[str] = Query(default=None),
+    visibility: Optional[List[str]] = Query(default=None),
     limit: int = Query(default=20, ge=1, le=100),
     page: int = Query(default=1, ge=1),
     current_user: Optional[Any] = Depends(app_context.get_optional_current_user),
