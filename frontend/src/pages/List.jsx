@@ -9,6 +9,7 @@ import SearchBar from '../components/SearchBar'
 import TagSelector from '../components/TagSelector'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../auth'
+import { useAddSnippet } from '../components/AddSnippetProvider'
 
 const PAGE_SIZE = 20
 
@@ -210,9 +211,20 @@ export default function List() {
               library is reading, remix tags, and bring new color to the conversation.
             </p>
             <div className="home-hero__actions">
-              <Link className="btn btn-primary" to={user ? '/new' : '/register'}>
-                {user ? 'Share a snippet' : 'Join the library'}
-              </Link>
+              {user ? (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={openAddSnippet}
+                  aria-keyshortcuts="Control+K Meta+K"
+                >
+                  Share a snippet
+                </button>
+              ) : (
+                <Link className="btn btn-primary" to="/register">
+                  Join the library
+                </Link>
+              )}
               <Link className="btn btn-outline-light" to={user ? '/groups' : '/login'}>
                 {user ? 'Browse your groups' : 'Preview the feed'}
               </Link>

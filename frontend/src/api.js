@@ -70,6 +70,14 @@ export async function getTrendingSnippets(params = {}) {
   return data
 }
 
+export async function listBooks(params = {}) {
+  const query = {}
+  if (params.limit) query.limit = params.limit
+  if (params.q) query.q = params.q
+  const { data } = await api.get('/books', { params: query })
+  return data
+}
+
 export async function listTags(params = {}) {
   const query = {}
   if (params.limit) query.limit = params.limit

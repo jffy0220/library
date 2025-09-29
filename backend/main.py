@@ -361,6 +361,10 @@ class TagOut(BaseModel):
 class TagSummary(TagOut):
     usage_count: int
 
+class BookSummary(BaseModel):
+    name: str
+    usage_count: int
+
 class SnippetCreate(SnippetBase):
     group_id: Optional[int] = None
 
@@ -1323,6 +1327,41 @@ def list_trending_snippets(limit: int = Query(6, ge=1, le=50)):
         for snippet in snippets:
             snippet.tags = tag_map.get(snippet.id, [])
     return snippets
+
+@app.get("/api/books", response_model=List[BookSummary])
+def list_books(
+    q: Optional[str] = Query(default=None, min_length=0, max_length=200),
+    limit: int = Query(100, ge=1, le=500),
+):
+    search = (q or "").strip()
+    search_clause = ""
+    params: List[object] = []
+    if search:
+        search_clause = " AND LOWER(TRIM(book_name)) LIKE %s"
+        params.append(f"%{search.lower()}%")
+    params.append(limit)
+
+    query = f"""
+        WITH source AS (
+            SELECT TRIM(book_name) AS name
+            FROM snippets
+            WHERE book_name IS NOT NULL
+              AND TRIM(book_name) <> ''
+              {search_clause}
+        )
+        SELECT name, COUNT(*) AS usage_count
+        FROM source
+        GROUP BY name
+        ORDER BY usage_count DESC, LOWER(name)
+        LIMIT %s
+    """
+
+    with get_conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+        cur.execute(query, params)
+        rows = cur.fetchall()
+
+    return [BookSummary(name=row["name"], usage_count=row["usage_count"]) for row in rows]
+
 
 @app.get("/api/tags", response_model=List[TagSummary])
 def list_tags(limit: int = Query(100, ge=1, le=500)):

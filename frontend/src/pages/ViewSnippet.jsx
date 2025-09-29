@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import {
   getSnippet,
@@ -70,6 +70,7 @@ export default function ViewSnippet() {
   const [commentReportSubmitting, setCommentReportSubmitting] = useState(false)
 
   const canModerate = user && (user.role === 'moderator' || user.role === 'admin')
+  const snippetTextInputId = 'view-snippet-text'
 
   useEffect(() => {
     let ignore = false
@@ -464,6 +465,63 @@ export default function ViewSnippet() {
     }
   }
 
+  const handleCopyWithCitation = useCallback(async () => {
+    if (!row) return
+    const snippetText = (row.text_snippet || '').trim()
+    if (!snippetText) {
+      setCommentToast({ type: 'danger', message: 'There is no snippet text to copy yet.' })
+      return
+    }
+    const authorName = (row.book_author || row.author || row.created_by_username || '').trim()
+    const bookName = (row.book_name || '').trim()
+    const pageNumber = row.page_number
+    const citationAuthor = authorName || 'Unknown author'
+    let citation = `“${snippetText}” —${citationAuthor}`
+    if (bookName) {
+      citation += `, ${bookName}`
+    }
+    if (pageNumber != null && pageNumber !== '') {
+      citation += ` (p. ${pageNumber})`
+    }
+    citation += '.'
+
+    const fallbackCopy = (text) => {
+      if (typeof document === 'undefined') return false
+      try {
+        const textarea = document.createElement('textarea')
+        textarea.value = text
+        textarea.setAttribute('readonly', '')
+        textarea.style.position = 'absolute'
+        textarea.style.left = '-9999px'
+        document.body.appendChild(textarea)
+        textarea.select()
+        const successful = document.execCommand('copy')
+        document.body.removeChild(textarea)
+        return successful
+      } catch (err) {
+        return false
+      }
+    }
+
+    try {
+      const clipboardAvailable =
+        typeof navigator !== 'undefined' &&
+        navigator.clipboard &&
+        typeof navigator.clipboard.writeText === 'function'
+      if (clipboardAvailable) {
+        await navigator.clipboard.writeText(citation)
+      } else {
+        const success = fallbackCopy(citation)
+        if (!success) {
+          throw new Error('Copy not supported')
+        }
+      }
+      setCommentToast({ type: 'success', message: 'Copied with citation.' })
+    } catch (err) {
+      setCommentToast({ type: 'danger', message: 'Unable to copy to clipboard. Please copy manually.' })
+    }
+  }, [row, setCommentToast])
+
   if (loading) return <div>Loading…</div>
   if (!row) return <div>Not found.</div>
 
@@ -738,8 +796,27 @@ export default function ViewSnippet() {
               <input className="form-control" value={row.verse || ''} readOnly />
             </div>
             <div className="col-12">
-              <label className="form-label">Text snippet</label>
-              <textarea className="form-control" rows="8" value={row.text_snippet || ''} readOnly />
+              <div className="d-flex justify-content-between align-items-center">
+                <label className="form-label mb-0" htmlFor={snippetTextInputId}>
+                  Text snippet
+                </label>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-outline-secondary"
+                  onClick={handleCopyWithCitation}
+                  disabled={!row.text_snippet}
+                  title="Copy the snippet with citation"
+                >
+                  Copy with citation
+                </button>
+              </div>
+              <textarea
+                id={snippetTextInputId}
+                className="form-control"
+                rows="8"
+                value={row.text_snippet || ''}
+                readOnly
+              />
             </div>
             <div className="col-12">
               <label className="form-label">Thoughts</label>

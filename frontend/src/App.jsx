@@ -1,6 +1,7 @@
 import React from 'react'
 import { Routes, Route, Navigate, Outlet } from 'react-router-dom'
 import Navbar from './components/Navbar'
+import { AddSnippetProvider } from './components/AddSnippetProvider'
 import List from './pages/List'
 import NewSnippet from './pages/NewSnippet'
 import ViewSnippet from './pages/ViewSnippet'
@@ -72,10 +73,11 @@ export default function App() {
   return (
     <AuthProvider>
       <NotificationPreferencesProvider>
-        <Routes>
-          <Route element={<AppLayout />}>
-            <Route path="/" element={<List />} />
-            <Route path="/snippet/:id" element={<ViewSnippet />} />
+        <AddSnippetProvider>
+          <Routes>
+            <Route element={<AppLayout />}>
+              <Route path="/" element={<List />} />
+              <Route path="/snippet/:id" element={<ViewSnippet />} />
             <Route element={<RequireAuth />}>
               <Route path="/new" element={<NewSnippet />} />
               <Route path="/notifications" element={<NotificationsPage />} />
@@ -98,8 +100,9 @@ export default function App() {
             <Route path="/register" element={<Register />} />
             <Route path="/forgot-password" element={<ForgotPassword />} />
           </Route>
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </AddSnippetProvider>
       </NotificationPreferencesProvider>
     </AuthProvider>
   )
