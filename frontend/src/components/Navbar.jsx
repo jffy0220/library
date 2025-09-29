@@ -4,6 +4,7 @@ import { useAuth } from '../auth'
 import { useNotifications } from '../hooks/useNotifications'
 import { useNotificationPreferences } from '../hooks/useNotificationPreferences'
 import { useAddSnippet } from './AddSnippetProvider'
+import InstantSearch from './InstantSearch'
 
 const NOTIFICATION_PREF_KEYS = {
   reply_to_snippet: 'replyToSnippet',
@@ -29,6 +30,7 @@ export default function Navbar() {
   const isModerator = user && (user.role === 'moderator' || user.role === 'admin')
   const [toastNotification, setToastNotification] = useState(null)
   const [showToast, setShowToast] = useState(false)
+  const [searchOpen, setSearchOpen] = useState(false)
   const { preferences } = useNotificationPreferences()
   const { open: openAddSnippet } = useAddSnippet()
 
@@ -103,6 +105,14 @@ export default function Navbar() {
     }
   }
 
+  const handleOpenSearch = useCallback(() => {
+    setSearchOpen(true)
+  }, [])
+
+  const handleCloseSearch = useCallback(() => {
+    setSearchOpen(false)
+  }, [])
+
   return (
     <>
       <header className="app-navbar">
@@ -115,6 +125,14 @@ export default function Navbar() {
             {user ? (
               <>
                 <div className="app-navbar__links">
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-outline-light"
+                    onClick={handleOpenSearch}
+                    title={'Search snippets (/ key)'}
+                  >
+                    Search
+                  </button>
                   <Link
                     className="btn btn-sm btn-outline-light"
                     to="/groups"
@@ -180,6 +198,14 @@ export default function Navbar() {
               <div className="app-navbar__cta text-white-50 small">Loading…</div>
             ) : (
               <div className="app-navbar__cta">
+                <button
+                  type="button"
+                  className="btn btn-sm btn-outline-light"
+                  onClick={handleOpenSearch}
+                  title={'Search snippets (/ key)'}
+                >
+                  Search
+                </button>
                 <Link className="btn btn-sm btn-outline-light" to="/login">
                   Sign in
                 </Link>
@@ -220,6 +246,7 @@ export default function Navbar() {
           </div>
         </div>
       )}
+      <InstantSearch open={searchOpen} onOpen={handleOpenSearch} onClose={handleCloseSearch} />
     </>
   )
 }

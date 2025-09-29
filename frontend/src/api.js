@@ -48,6 +48,61 @@ export async function listSnippets(params = {}) {
   return data
 }
 
+export async function searchSnippets(params = {}) {
+  const query = new URLSearchParams()
+  if (params.q) {
+    query.set('q', params.q)
+  }
+  if (Array.isArray(params.tags)) {
+    params.tags
+      .map((tag) => (tag || '').trim())
+      .filter(Boolean)
+      .forEach((tag) => {
+        query.append('tag', tag)
+      })
+  }
+  if (params.book) {
+    query.set('book', params.book)
+  }
+  if (params.createdFrom) {
+    query.set('createdFrom', params.createdFrom)
+  }
+  if (params.createdTo) {
+    query.set('createdTo', params.createdTo)
+  }
+  if (params.limit) {
+    query.set('limit', params.limit)
+  }
+  if (params.page) {
+    query.set('page', params.page)
+  }
+  const config = {}
+  if ([...query.keys()].length > 0) {
+    config.params = query
+  }
+  const { data } = await api.get('/search/snippets', config)
+  return data
+}
+
+export async function listSavedSearches() {
+  const { data } = await api.get('/search/saved')
+  return data
+}
+
+export async function createSavedSearch(payload) {
+  const { data } = await api.post('/search/saved', payload)
+  return data
+}
+
+export async function updateSavedSearch(id, payload) {
+  const { data } = await api.put(`/search/saved/${id}`, payload)
+  return data
+}
+
+export async function deleteSavedSearch(id) {
+  await api.delete(`/search/saved/${id}`)
+}
+
 export async function createSnippet(payload) {
   const { data } = await api.post('/snippets', payload)
   return data

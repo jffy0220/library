@@ -6,6 +6,7 @@ import os
 import re
 import sys
 import time
+import json
 import secrets
 from collections import defaultdict
 from datetime import datetime, date, timedelta
@@ -402,6 +403,74 @@ class SnippetListResponse(BaseModel):
     class Config:
         allow_population_by_field_name = True
 
+class SearchHighlight(BaseModel):
+    text: Optional[str] = None
+    thoughts: Optional[str] = None
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class SnippetSearchResult(SnippetOut):
+    search_rank: Optional[float] = Field(default=None, alias="searchRank")
+    highlights: SearchHighlight = Field(default_factory=SearchHighlight)
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class SnippetSearchResponse(BaseModel):
+    items: List[SnippetSearchResult]
+    total: int
+    next_page: Optional[int] = Field(default=None, alias="nextPage")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class SavedSearchBase(BaseModel):
+    name: constr(strip_whitespace=True, min_length=1, max_length=120)
+    query: Dict[str, Any]
+
+
+class SavedSearchOut(SavedSearchBase):
+    id: int
+    created_at: datetime = Field(alias="createdAt")
+    updated_at: datetime = Field(alias="updatedAt")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class SavedSearchCreate(SavedSearchBase):
+    pass
+
+
+class SavedSearchUpdate(BaseModel):
+    name: Optional[constr(strip_whitespace=True, min_length=1, max_length=120)] = None
+    query: Optional[Dict[str, Any]] = None
+
+    @model_validator(mode="after")
+    def _validate_any(cls, values: "SavedSearchUpdate") -> "SavedSearchUpdate":
+        if values.name is None and values.query is None:
+            raise ValueError("At least one field must be provided")
+        return values
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+def _load_saved_search_query(raw: Any) -> Dict[str, Any]:
+    if isinstance(raw, dict):
+        return raw
+    if raw is None:
+        return {}
+    if isinstance(raw, (bytes, bytearray)):
+        raw = raw.decode("utf-8", errors="ignore")
+    if isinstance(raw, str):
+        try:
+            loaded = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        if isinstance(loaded, dict):
+            return loaded
+    return {}
+
 TAG_SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 
@@ -481,6 +550,47 @@ def fetch_tags_for_snippets(conn, snippet_ids: List[int]) -> Dict[int, List[TagO
             )
     return mapping
 
+
+def _hydrate_saved_search(row: Any) -> SavedSearchOut:
+    query_data = _load_saved_search_query(row["query"]) if "query" in row else {}
+    return SavedSearchOut(
+        id=row["id"],
+        name=row["name"],
+        query=query_data,
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def fetch_saved_search(conn, saved_search_id: int, user_id: int) -> Optional[SavedSearchOut]:
+    with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+        cur.execute(
+            """
+            SELECT id, name, query, created_at, updated_at
+            FROM saved_searches
+            WHERE id = %s AND user_id = %s
+            """,
+            (saved_search_id, user_id),
+        )
+        row = cur.fetchone()
+    if not row:
+        return None
+    return _hydrate_saved_search(row)
+
+
+def list_saved_searches_for_user(conn, user_id: int) -> List[SavedSearchOut]:
+    with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+        cur.execute(
+            """
+            SELECT id, name, query, created_at, updated_at
+            FROM saved_searches
+            WHERE user_id = %s
+            ORDER BY updated_at DESC, id DESC
+            """,
+            (user_id,),
+        )
+        rows = cur.fetchall()
+    return [_hydrate_saved_search(row) for row in rows]
 
 def link_tags_to_snippet(conn, snippet_id: int, tags: List[TagOut]) -> None:
     if not tags:
@@ -1299,6 +1409,216 @@ def list_snippets(
     return SnippetListResponse(items=snippets, total=total, next_page=next_page)
 
 
+@app.get("/api/search/snippets", response_model=SnippetSearchResponse)
+def search_snippets(
+    q: Optional[str] = Query(None, description="Full-text search query"),
+    tags_csv: Optional[str] = Query(
+        None, alias="tags", description="Comma separated list of tags"
+    ),
+    tags_multi: Optional[List[str]] = Query(
+        None, alias="tag", description="Repeatable tag filters"
+    ),
+    book: Optional[str] = Query(None, description="Filter by book title"),
+    created_from: Optional[datetime] = Query(
+        None, alias="createdFrom", description="Filter by created date (inclusive)"
+    ),
+    created_to: Optional[datetime] = Query(
+        None, alias="createdTo", description="Filter by created date (inclusive)"
+    ),
+    limit: int = Query(10, ge=1, le=50),
+    page: int = Query(1, ge=1),
+    current_user: Optional[UserOut] = Depends(get_optional_current_user),
+):
+    search_term = (q or "").strip()
+    raw_tags: List[str] = []
+    if tags_csv:
+        raw_tags.extend(part for part in tags_csv.split(",") if part.strip())
+    if tags_multi:
+        raw_tags.extend(tags_multi)
+    normalized_tags = normalize_tag_inputs(raw_tags)
+    tag_slugs = [slug for _, slug in normalized_tags]
+
+    ts_vector = "to_tsvector('english', coalesce(s.text_snippet,'') || ' ' || coalesce(s.thoughts,''))"
+    viewer_id = current_user.id if current_user else None
+    viewer_is_moderator = bool(current_user and is_moderator(current_user))
+
+    select_fields = [
+        "s.id",
+        "s.created_utc",
+        "s.date_read",
+        "s.book_name",
+        "s.page_number",
+        "s.chapter",
+        "s.verse",
+        "s.text_snippet",
+        "s.thoughts",
+        "s.created_by_user_id",
+        "s.group_id",
+        "s.visibility",
+        "u.username AS created_by_username",
+    ]
+    select_params: List[object] = []
+    where_clauses: List[str] = []
+    where_params: List[object] = []
+    joins = ["LEFT JOIN users u ON u.id = s.created_by_user_id"]
+
+    if search_term:
+        headline_options = (
+            "StartSel=<mark>, StopSel=</mark>, MaxFragments=3, MaxWords=32, "
+            "MinWords=12, ShortWord=0, FragmentDelimiter=\" … \""
+        )
+        thought_headline_options = (
+            "StartSel=<mark>, StopSel=</mark>, MaxFragments=2, MaxWords=28, "
+            "MinWords=10, ShortWord=0, FragmentDelimiter=\" … \""
+        )
+        select_fields.append(
+            f"ts_rank_cd({ts_vector}, websearch_to_tsquery('english', %s)) AS search_rank"
+        )
+        select_fields.append(
+            f"ts_headline('english', coalesce(s.text_snippet,''), websearch_to_tsquery('english', %s), '{headline_options}') AS text_highlight"
+        )
+        select_fields.append(
+            f"ts_headline('english', coalesce(s.thoughts,''), websearch_to_tsquery('english', %s), '{thought_headline_options}') AS thoughts_highlight"
+        )
+        select_params.extend([search_term, search_term, search_term])
+        where_clauses.append(
+            f"{ts_vector} @@ websearch_to_tsquery('english', %s)"
+        )
+        where_params.append(search_term)
+    else:
+        select_fields.extend(
+            [
+                "NULL::float AS search_rank",
+                "NULL::text AS text_highlight",
+                "NULL::text AS thoughts_highlight",
+            ]
+        )
+
+    if tag_slugs:
+        where_clauses.append(
+            "s.id IN ("
+            "SELECT st.snippet_id FROM snippet_tags st "
+            "JOIN tags t ON t.id = st.tag_id "
+            "GROUP BY st.snippet_id "
+            "HAVING COUNT(DISTINCT CASE WHEN t.slug = ANY(%s) THEN t.slug END) = %s"
+            ")"
+        )
+        where_params.append(tag_slugs)
+        where_params.append(len(tag_slugs))
+
+    book_filter = (book or "").strip()
+    if book_filter:
+        where_clauses.append("s.book_name ILIKE %s")
+        where_params.append(f"%{book_filter}%")
+
+    if created_from:
+        where_clauses.append("s.created_utc >= %s")
+        where_params.append(created_from)
+
+    if created_to:
+        where_clauses.append("s.created_utc <= %s")
+        where_params.append(created_to)
+
+    if viewer_id is None:
+        where_clauses.append("s.visibility = 'public'")
+    else:
+        where_clauses.append("(s.visibility = 'public' OR s.created_by_user_id = %s)")
+        where_params.append(viewer_id)
+
+    if viewer_is_moderator:
+        pass
+    elif viewer_id is None:
+        where_clauses.append("s.group_id IS NULL")
+    else:
+        where_clauses.append(
+            "(s.group_id IS NULL OR s.created_by_user_id = %s OR EXISTS ("
+            "SELECT 1 FROM group_memberships gm WHERE gm.group_id = s.group_id AND gm.user_id = %s"
+            "))"
+        )
+        where_params.extend([viewer_id, viewer_id])
+
+    where_sql = ""
+    if where_clauses:
+        where_sql = " WHERE " + " AND ".join(where_clauses)
+
+    filter_params = list(where_params)
+    with get_conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            count_query = (
+                "SELECT COUNT(DISTINCT s.id) FROM snippets s "
+                + " ".join(joins)
+                + where_sql
+            )
+            cur.execute(count_query, filter_params)
+            total_row = cur.fetchone()
+            total = int(total_row[0]) if total_row else 0
+
+            offset = max((page - 1) * limit, 0)
+
+            order_clause = "search_rank DESC, s.created_utc DESC" if search_term else "s.created_utc DESC"
+            query = (
+                "SELECT "
+                + ", ".join(select_fields)
+                + " FROM snippets s "
+                + " ".join(joins)
+                + where_sql
+                + f" ORDER BY {order_clause} LIMIT %s OFFSET %s"
+            )
+            query_params = select_params + filter_params + [limit, offset]
+            cur.execute(query, query_params)
+            rows = cur.fetchall()
+
+        snippet_ids = [row["id"] for row in rows]
+        tag_map = fetch_tags_for_snippets(conn, snippet_ids)
+
+    results: List[SnippetSearchResult] = []
+    for row in rows:
+        snippet_payload = {
+            "id": row["id"],
+            "created_utc": row["created_utc"],
+            "date_read": row["date_read"],
+            "book_name": row["book_name"],
+            "page_number": row["page_number"],
+            "chapter": row["chapter"],
+            "verse": row["verse"],
+            "text_snippet": row["text_snippet"],
+            "thoughts": row["thoughts"],
+            "created_by_user_id": row["created_by_user_id"],
+            "created_by_username": row["created_by_username"],
+            "group_id": row["group_id"],
+            "visibility": row["visibility"],
+            "tags": tag_map.get(row["id"], []),
+        }
+        text_highlight = row.get("text_highlight")
+        if not text_highlight and snippet_payload.get("text_snippet"):
+            snippet_text = snippet_payload.get("text_snippet") or ""
+            preview = snippet_text[:280]
+            if len(snippet_text) > 280:
+                preview = preview.rstrip() + "…"
+            text_highlight = preview
+        thoughts_highlight = row.get("thoughts_highlight")
+        if not thoughts_highlight and snippet_payload.get("thoughts"):
+            thoughts_text = snippet_payload.get("thoughts") or ""
+            preview = thoughts_text[:240]
+            if len(thoughts_text) > 240:
+                preview = preview.rstrip() + "…"
+            thoughts_highlight = preview
+        result = SnippetSearchResult(
+            **snippet_payload,
+            search_rank=row.get("search_rank"),
+            highlights=SearchHighlight(
+                text=text_highlight,
+                thoughts=thoughts_highlight,
+            ),
+        )
+        results.append(result)
+
+    next_page = None
+    if (page - 1) * limit + len(results) < total:
+        next_page = page + 1
+
+    return SnippetSearchResponse(items=results, total=total, next_page=next_page)
+
 @app.get("/api/snippets/trending", response_model=List[SnippetWithStats])
 def list_trending_snippets(limit: int = Query(6, ge=1, le=50)):
     with get_conn() as conn:
@@ -1327,6 +1647,94 @@ def list_trending_snippets(limit: int = Query(6, ge=1, le=50)):
         for snippet in snippets:
             snippet.tags = tag_map.get(snippet.id, [])
     return snippets
+
+@app.get("/api/search/saved", response_model=List[SavedSearchOut])
+def list_saved_searches_endpoint(
+    current_user: UserOut = Depends(get_current_user),
+):
+    with get_conn() as conn:
+        return list_saved_searches_for_user(conn, current_user.id)
+
+
+@app.post(
+    "/api/search/saved",
+    response_model=SavedSearchOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_saved_search_endpoint(
+    payload: SavedSearchCreate,
+    current_user: UserOut = Depends(get_current_user),
+):
+    query_payload = payload.query or {}
+    with get_conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            cur.execute(
+                """
+                INSERT INTO saved_searches (user_id, name, query)
+                VALUES (%s, %s, %s)
+                RETURNING id, name, query, created_at, updated_at
+                """,
+                (current_user.id, payload.name, json.dumps(query_payload)),
+            )
+            row = cur.fetchone()
+        conn.commit()
+    if not row:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to create saved search",
+        )
+    return _hydrate_saved_search(row)
+
+
+@app.put("/api/search/saved/{saved_id}", response_model=SavedSearchOut)
+def update_saved_search_endpoint(
+    saved_id: int,
+    payload: SavedSearchUpdate,
+    current_user: UserOut = Depends(get_current_user),
+):
+    with get_conn() as conn:
+        existing = fetch_saved_search(conn, saved_id, current_user.id)
+        if not existing:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Saved search not found")
+
+        next_name = payload.name if payload.name is not None else existing.name
+        next_query = payload.query if payload.query is not None else existing.query
+
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            cur.execute(
+                """
+                UPDATE saved_searches
+                SET name = %s, query = %s, updated_at = NOW()
+                WHERE id = %s AND user_id = %s
+                RETURNING id, name, query, created_at, updated_at
+                """,
+                (next_name, json.dumps(next_query), saved_id, current_user.id),
+            )
+            row = cur.fetchone()
+        conn.commit()
+
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Saved search not found")
+    return _hydrate_saved_search(row)
+
+
+@app.delete("/api/search/saved/{saved_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_saved_search_endpoint(
+    saved_id: int,
+    current_user: UserOut = Depends(get_current_user),
+):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM saved_searches WHERE id = %s AND user_id = %s",
+                (saved_id, current_user.id),
+            )
+            deleted = cur.rowcount
+        conn.commit()
+
+    if deleted == 0:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Saved search not found")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 @app.get("/api/books", response_model=List[BookSummary])
 def list_books(
