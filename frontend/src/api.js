@@ -23,6 +23,9 @@ export async function listSnippets(params = {}) {
   if (params.q) {
     query.set('q', params.q)
   }
+  if (params.book) {
+    query.set('book', params.book)
+  }
   if (Array.isArray(params.tags)) {
     params.tags
       .map((tag) => (tag || '').trim())

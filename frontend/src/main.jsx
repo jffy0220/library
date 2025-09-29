@@ -10,3 +10,21 @@ createRoot(document.getElementById('root')).render(
     <App />
   </BrowserRouter>
 )
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker
+      .register('/service-worker.js')
+      .then((registration) => {
+        navigator.serviceWorker.ready.then((readyRegistration) => {
+          readyRegistration.active?.postMessage('processQueue')
+        })
+        window.addEventListener('online', () => {
+          registration.active?.postMessage('processQueue')
+        })
+      })
+      .catch((error) => {
+        console.error('Service worker registration failed', error)
+      })
+  })
+}

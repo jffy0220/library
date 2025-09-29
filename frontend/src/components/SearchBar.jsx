@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 
-export default function SearchBar({ value, onSearch, placeholder = 'Search…', debounce = 300 }) {
+export default function SearchBar({ value, onSearch, placeholder = 'Search…', debounce = 300, inputRef }) {
   const [term, setTerm] = useState(value || '')
 
   useEffect(() => {
@@ -27,6 +27,7 @@ export default function SearchBar({ value, onSearch, placeholder = 'Search…', 
         onChange={(event) => setTerm(event.target.value)}
         placeholder={placeholder}
         aria-label="Search snippets"
+        ref={inputRef}
       />
       {term ? (
         <button

@@ -116,9 +116,17 @@ export function AddSnippetProvider({ children }) {
   }, [clearUndoState])
 
   const showCreationToast = useCallback(
-    (snippetId) => {
+    ({ snippetId, queued = false, message } = {}) => {
+      if (queued) {
+        setToast({
+          message: message || 'Snippet saved offline. It will sync when you reconnect.',
+          variant: 'info',
+          duration: 6000,
+        })
+        return
+      }
       if (!snippetId) {
-        setToast({ message: 'Snippet saved.', variant: 'success', duration: 4000 })
+        setToast({ message: message || 'Snippet saved.', variant: 'success', duration: 4000 })
         return
       }
       clearUndoState()
@@ -128,7 +136,7 @@ export function AddSnippetProvider({ children }) {
       }, 5000)
       undoRef.current = { snippetId, timerId }
       setToast({
-        message: 'Snippet saved.',
+        message: message || 'Snippet saved.',
         variant: 'success',
         actionLabel: 'Undo',
         onAction: handleUndo,
@@ -146,6 +154,29 @@ export function AddSnippetProvider({ children }) {
     }, toast.duration)
     return () => window.clearTimeout(timerId)
   }, [toast])
+
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return undefined
+    const handleMessage = (event) => {
+      const data = event?.data
+      if (!data || typeof data !== 'object') return
+      if (data.type === 'SNIPPET_SYNC_COMPLETE') {
+        setToast({
+          message: data.message || 'Offline snippets synced.',
+          variant: 'success',
+          duration: 5000,
+        })
+      } else if (data.type === 'SNIPPET_SYNC_ERROR') {
+        setToast({
+          message: data.message || 'We could not sync your offline snippets.',
+          variant: 'danger',
+          duration: 6000,
+        })
+      }
+    }
+    navigator.serviceWorker.addEventListener('message', handleMessage)
+    return () => navigator.serviceWorker.removeEventListener('message', handleMessage)
+  }, [])
 
   const closeModal = useCallback(() => {
     setIsOpen(false)
@@ -388,7 +419,7 @@ export function AddSnippetProvider({ children }) {
           return next
         })
       }
-      showCreationToast(result?.id)
+      showCreationToast({ snippetId: result?.id, queued: Boolean(result?.queued), message: result?.message })
     } catch (err) {
       const detail = err?.response?.data?.detail
       setFormError(detail || 'Failed to save snippet. Please try again.')
