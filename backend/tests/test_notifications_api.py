@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from backend.app.routes import notifications as notifications_routes
 from backend.app.routes import user_preferences as preferences_routes
@@ -35,7 +35,7 @@ def test_list_notifications_returns_paginated_results(monkeypatch):
         user_id: int,
         *,
         limit: int,
-        cursor: str | None,
+        cursor: Optional[str],
         conn=None,
     ) -> NotificationListResponse:
         captured["user_id"] = user_id
