@@ -89,6 +89,11 @@ export async function listSavedSearches() {
   return data
 }
 
+export async function getSavedSearch(savedSearchId) {
+  const { data } = await api.get(`/search/saved/${savedSearchId}`)
+  return data
+}
+
 export async function createSavedSearch(payload) {
   const { data } = await api.post('/search/saved', payload)
   return data
@@ -101,6 +106,15 @@ export async function updateSavedSearch(id, payload) {
 
 export async function deleteSavedSearch(id) {
   await api.delete(`/search/saved/${id}`)
+}
+
+export async function getEngagementStatus(params = {}) {
+  const query = {}
+  if (params.timezone) {
+    query.timezone = params.timezone
+  }
+  const { data } = await api.get('/engagement/status', { params: query })
+  return data
 }
 
 export async function createSnippet(payload) {

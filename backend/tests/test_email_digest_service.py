@@ -27,12 +27,18 @@ class FakeCursor:
     def __init__(self, *, fetchall_result=None):
         self.fetchall_result = list(fetchall_result or [])
         self.execute_calls = []
+        self.fetchone_result = None
 
     def execute(self, query, params=None):
         self.execute_calls.append((" ".join(query.split()), params))
 
     def fetchall(self):
         return list(self.fetchall_result)
+
+    def fetchone(self):
+        if self.fetchone_result is None and self.fetchall_result:
+            return self.fetchall_result[0]
+        return self.fetchone_result
 
     def __enter__(self):
         return self
@@ -141,3 +147,59 @@ def test_send_email_digests_handles_provider_failure(monkeypatch):
 
     # Update cursor should never have been invoked because the send failed.
     assert len(conn.cursor_calls) == 1
+
+def test_weekly_digest_includes_weekly_sections(monkeypatch):
+    now = datetime(2024, 8, 5, 10, tzinfo=timezone.utc)
+
+    select_cursor = FakeCursor(fetchall_result=[])
+    subscriber_cursor = FakeCursor(
+        fetchall_result=[{"id": 42, "email": "reader@example.com", "username": "reader", "timezone": "UTC"}]
+    )
+    conn = FakeConnection(select_cursor, subscriber_cursor)
+
+    provider = DummyProvider()
+    monkeypatch.setattr(email_digest, "_get_email_provider", lambda: provider)
+    monkeypatch.setattr(
+        email_digest,
+        "EMAIL_CONFIG",
+        SimpleNamespace(app_base_url="https://library.test/", from_email="noreply@library.test"),
+    )
+
+    summary_payload = {
+        "timezone": "UTC",
+        "period_start": now.date() - timedelta(days=6),
+        "period_end": now.date(),
+        "recent_count": 3,
+        "top_tags": [
+            {"name": "Wisdom", "count": 2, "url": "https://library.test/?savedSearch=10"}
+        ],
+        "rediscover": [
+            {
+                "id": 99,
+                "title": "Old Note",
+                "created_utc": now - timedelta(days=90),
+                "excerpt": "Remember this insight.",
+            }
+        ],
+    }
+
+    monkeypatch.setattr(
+        email_digest.engagement_service,
+        "weekly_activity_summary",
+        lambda *args, **kwargs: summary_payload,
+    )
+
+    summary = email_digest.send_email_digests(
+        EmailDigestOption.WEEKLY,
+        now=now,
+        conn=conn,
+    )
+
+    assert summary.digests_sent == 1
+    assert summary.notifications_delivered == 0
+    assert summary.failures == 0
+    assert provider.messages
+    message = provider.messages[0]
+    assert "weekly recap" in message["subject"].lower()
+    assert "Wisdom" in message["html_body"]
+    assert "Old Note" in message["html_body"]

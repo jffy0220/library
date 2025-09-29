@@ -1,0 +1,27 @@
+<div style="font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #0f172a;">
+  <p style="margin-bottom: 1.5em;">Hi {{ recipient_name }},</p>
+
+  <p style="margin-bottom: 1em;">Here is your Book Snippets recap for <strong>{{ weekly_period }}</strong>.</p>
+  <p style="margin-bottom: 1.5em;">{{ weekly_recent_line }}</p>
+
+  <h2 style="font-size: 1.1em; color: #1e293b; margin-bottom: 0.5em;">Top tags this week</h2>
+  <div style="margin-bottom: 1.5em;">
+    {{ weekly_top_tags_html }}
+  </div>
+
+  <h2 style="font-size: 1.1em; color: #1e293b; margin-bottom: 0.5em;">Rediscover</h2>
+  <div style="margin-bottom: 1.5em;">
+    {{ weekly_rediscover_html }}
+  </div>
+
+  <h2 style="font-size: 1.1em; color: #1e293b; margin-bottom: 0.5em;">Unread notifications</h2>
+  <div style="margin-bottom: 1.5em;">
+    {{ notifications_html }}
+  </div>
+
+  <p style="margin-bottom: 2em;">
+    <a href="{{ notifications_url }}" style="color: #2563eb;">Catch up on notifications</a>
+  </p>
+
+  <p style="margin-bottom: 0;">Keep reading!</p>
+</div>

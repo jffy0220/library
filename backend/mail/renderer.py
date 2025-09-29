@@ -46,6 +46,9 @@ def render_reply_notification(
 def render_email_digest(context: Dict[str, Any]) -> Tuple[str, str, str]:
     return _render_subject_body("email_digest", context)
 
+def render_weekly_digest(context: Dict[str, Any]) -> Tuple[str, str, str]:
+    return _render_subject_body("weekly_digest", context)
+
 class EmailRenderer:
     """Compatibility wrapper for legacy imports."""
 

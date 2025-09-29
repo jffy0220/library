@@ -16,6 +16,8 @@ import psycopg2.extras
 from psycopg2.extensions import connection as PgConnection
 
 from ..schemas.notifications import EmailDigestOption, NotificationType
+from . import engagement as engagement_service
+from .engagement import DEFAULT_TIMEZONE
 
 EMAIL_CONFIG = SimpleNamespace(app_base_url="")
 _get_conn: Optional[Callable[[], PgConnection]] = None
@@ -50,7 +52,7 @@ def _ensure_dependencies() -> None:
     if _get_conn is None or _get_email_provider is None:
         raise RuntimeError("Backend dependencies are not configured")
 
-from ...mail.renderer import render_email_digest
+from ...mail.renderer import render_email_digest, render_weekly_digest
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +145,24 @@ def _build_digest_items(
         )
     return items
 
+def _group_rows_by_user(rows: Iterable[Mapping[str, object]]) -> Dict[int, Dict[str, object]]:
+    grouped: Dict[int, Dict[str, object]] = {}
+    for row in rows:
+        user_id = int(row["user_id"])
+        entry = grouped.setdefault(
+            user_id,
+            {
+                "rows": [],
+                "email": row.get("email"),
+                "username": row.get("username"),
+            },
+        )
+        entry["rows"].append(row)
+        if not entry.get("email") and row.get("email"):
+            entry["email"] = row.get("email")
+        if not entry.get("username") and row.get("username"):
+            entry["username"] = row.get("username")
+    return grouped
 
 def _render_items_text(items: Sequence[Mapping[str, object]]) -> str:
     lines: List[str] = []
@@ -188,6 +208,93 @@ def _render_items_html(items: Sequence[Mapping[str, object]]) -> str:
     parts.append("</ul>")
     return "".join(parts)
 
+def _render_top_tags_text(entries: Sequence[Mapping[str, object]]) -> str:
+    if not entries:
+        return "No tagged snippets this week."
+    lines = []
+    for entry in entries:
+        line = f"- #{entry.get('name', '')}: {entry.get('count', 0)} mention(s)"
+        url = entry.get("url")
+        if url:
+            line += f" → {url}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _render_top_tags_html(entries: Sequence[Mapping[str, object]]) -> str:
+    if not entries:
+        return "<p>You did not add any tagged snippets this week.</p>"
+    parts = ["<ul style=\"margin: 0; padding-left: 1.25em;\">"]
+    for entry in entries:
+        name = html.escape(str(entry.get("name", "")))
+        count = int(entry.get("count", 0))
+        url = str(entry.get("url") or "")
+        parts.append("<li style=\"margin-bottom: 0.5em;\">")
+        parts.append(f"<strong>#{name}</strong> — {count} snippet{'s' if count != 1 else ''}")
+        if url:
+            safe_url = html.escape(url, quote=True)
+            parts.append(
+                f" <a href=\"{safe_url}\" style=\"color: #2563eb;\">Open saved search</a>"
+            )
+        parts.append("</li>")
+    parts.append("</ul>")
+    return "".join(parts)
+
+
+def _render_rediscover_text(
+    items: Sequence[Mapping[str, object]], base_url: str
+) -> str:
+    if not items:
+        return "Nothing to rediscover this week — keep exploring!"
+    lines: List[str] = []
+    for item in items:
+        created = item.get("created_utc")
+        created_label = ""
+        if isinstance(created, datetime):
+            created_label = created.date().isoformat()
+        title = item.get("title") or "Untitled"
+        snippet_id = item.get("id")
+        url = f"{base_url}snippet/{snippet_id}" if base_url and snippet_id else ""
+        line = f"- {title} ({created_label})"
+        if url:
+            line += f" → {url}"
+        excerpt = item.get("excerpt")
+        if excerpt:
+            line += f"\n  {excerpt}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _render_rediscover_html(
+    items: Sequence[Mapping[str, object]], base_url: str
+) -> str:
+    if not items:
+        return "<p>We did not find older snippets to revisit this week.</p>"
+    parts = ["<ul style=\"margin: 0; padding-left: 1.25em;\">"]
+    for item in items:
+        title = html.escape(str(item.get("title", "Untitled")))
+        created = item.get("created_utc")
+        if isinstance(created, datetime):
+            created_label = created.date().isoformat()
+        else:
+            created_label = html.escape(str(created)) if created else ""
+        excerpt = html.escape(str(item.get("excerpt", "")))
+        snippet_id = item.get("id")
+        url = f"{base_url}snippet/{snippet_id}" if base_url and snippet_id else ""
+        parts.append("<li style=\"margin-bottom: 1em;\">")
+        parts.append(f"<strong>{title}</strong>")
+        if created_label:
+            parts.append(f"<br /><span style=\"color: #64748b;\">{created_label}</span>")
+        if excerpt:
+            parts.append(f"<div style=\"margin-top: 0.5em;\">{excerpt}</div>")
+        if url:
+            safe_url = html.escape(url, quote=True)
+            parts.append(
+                f"<a href=\"{safe_url}\" style=\"color: #2563eb;\">Open snippet</a>"
+            )
+        parts.append("</li>")
+    parts.append("</ul>")
+    return "".join(parts)
 
 def _fetch_candidate_rows(
     connection: PgConnection,
@@ -222,6 +329,134 @@ def _fetch_candidate_rows(
         rows = cur.fetchall()
     return list(rows)
 
+def _fetch_weekly_subscribers(connection: PgConnection) -> List[Mapping[str, object]]:
+    with connection.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """
+            SELECT u.id, u.email, u.username, COALESCE(up.timezone, %s) AS timezone
+            FROM users u
+            LEFT JOIN notification_prefs p ON p.user_id = u.id
+            LEFT JOIN user_profiles up ON up.user_id = u.id
+            WHERE (p.email_digest = %s OR p.email_digest IS NULL)
+              AND u.email IS NOT NULL
+            """,
+            (DEFAULT_TIMEZONE, EmailDigestOption.WEEKLY.value),
+        )
+        rows = cur.fetchall()
+    return list(rows)
+
+
+def _prepare_daily_recipients(
+    notification_rows: Sequence[Mapping[str, object]],
+    *,
+    base_url: str,
+) -> List[Dict[str, object]]:
+    grouped = _group_rows_by_user(notification_rows)
+    recipients: List[Dict[str, object]] = []
+    for user_id, payload in grouped.items():
+        email = (payload.get("email") or "").strip()
+        if not email:
+            continue
+        items = _build_digest_items(payload["rows"], base_url)
+        if not items:
+            continue
+        context = {
+            "recipient_name": payload.get("username") or "there",
+            "frequency_label": EmailDigestOption.DAILY.value,
+            "frequency_title": "Daily",
+            "item_count": len(items),
+            "items_text": _render_items_text(items),
+            "items_html": _render_items_html(items),
+            "notifications_url": f"{base_url}notifications" if base_url else "",
+        }
+        recipients.append(
+            {
+                "user_id": user_id,
+                "email": email,
+                "context": context,
+                "notification_ids": [item["id"] for item in items],
+                "notification_count": len(items),
+                "template": "daily",
+            }
+        )
+    return recipients
+
+
+def _prepare_weekly_recipients(
+    connection: PgConnection,
+    notification_rows: Sequence[Mapping[str, object]],
+    *,
+    base_url: str,
+    now: datetime,
+) -> List[Dict[str, object]]:
+    grouped = _group_rows_by_user(notification_rows)
+    subscribers = _fetch_weekly_subscribers(connection)
+    for subscriber in subscribers:
+        user_id = int(subscriber["id"])
+        entry = grouped.setdefault(user_id, {"rows": []})
+        entry.setdefault("rows", [])
+        entry["email"] = subscriber.get("email")
+        entry["username"] = subscriber.get("username")
+        entry["timezone"] = subscriber.get("timezone")
+
+    recipients: List[Dict[str, object]] = []
+    for user_id, payload in grouped.items():
+        email = (payload.get("email") or "").strip()
+        if not email:
+            continue
+        timezone_name = payload.get("timezone") or DEFAULT_TIMEZONE
+        items = _build_digest_items(payload.get("rows", []), base_url)
+        notification_ids = [item["id"] for item in items]
+        weekly_summary = engagement_service.weekly_activity_summary(
+            connection,
+            user_id,
+            timezone_name,
+            now=now,
+            base_url=base_url,
+        )
+
+        period_start = weekly_summary.get("period_start")
+        period_end = weekly_summary.get("period_end")
+        timezone_label = weekly_summary.get("timezone") or timezone_name
+        period_start_label = period_start.isoformat() if hasattr(period_start, "isoformat") else str(period_start)
+        period_end_label = period_end.isoformat() if hasattr(period_end, "isoformat") else str(period_end)
+        period_range = f"{period_start_label} – {period_end_label} ({timezone_label})"
+
+        top_tags = weekly_summary.get("top_tags", [])
+        rediscover_items = weekly_summary.get("rediscover", [])
+        recent_count = int(weekly_summary.get("recent_count", 0))
+        recent_line = (
+            "You captured 1 new snippet."
+            if recent_count == 1
+            else f"You captured {recent_count} new snippets."
+        )
+
+        context = {
+            "recipient_name": payload.get("username") or "there",
+            "weekly_period": period_range,
+            "weekly_recent_line": recent_line,
+            "weekly_recent_count": recent_count,
+            "weekly_top_tags_text": _render_top_tags_text(top_tags),
+            "weekly_top_tags_html": _render_top_tags_html(top_tags),
+            "weekly_rediscover_text": _render_rediscover_text(rediscover_items, base_url),
+            "weekly_rediscover_html": _render_rediscover_html(rediscover_items, base_url),
+            "notifications_text": _render_items_text(items) if items else "",
+            "notifications_html": _render_items_html(items) if items else "",
+            "notifications_url": f"{base_url}notifications" if base_url else "",
+        }
+
+        recipients.append(
+            {
+                "user_id": user_id,
+                "email": email,
+                "context": context,
+                "notification_ids": notification_ids,
+                "notification_count": len(items),
+                "template": "weekly",
+            }
+        )
+
+    return recipients
 
 def send_email_digests(
     frequency: EmailDigestOption,
@@ -245,62 +480,44 @@ def send_email_digests(
     provider = _get_email_provider()
 
     with _connection_scope(conn) as connection:
-        rows = _fetch_candidate_rows(connection, frequency, window_start)
-        if not rows:
-            return summary
-
-        grouped: Dict[int, Dict[str, object]] = {}
-        for row in rows:
-            user_id = int(row["user_id"])
-            entry = grouped.setdefault(
-                user_id,
-                {
-                    "email": row.get("email"),
-                    "username": row.get("username"),
-                    "rows": [],
-                },
+        notification_rows = _fetch_candidate_rows(connection, frequency, window_start)
+        if frequency == EmailDigestOption.DAILY:
+            recipients = _prepare_daily_recipients(notification_rows, base_url=base_url)
+        else:
+            recipients = _prepare_weekly_recipients(
+                connection,
+                notification_rows,
+                base_url=base_url,
+                now=current_time,
             )
-            entry["rows"].append(row)
+
+        if not recipients:
+            return summary
 
         delivered_notification_ids: List[int] = []
 
-        for user_id, payload in grouped.items():
-            email = (payload.get("email") or "").strip()
-            if not email:
-                logger.debug(
-                    "Skipping digest for user without email",
-                    extra={"user_id": user_id, "frequency": frequency.value},
-                )
-                continue
-
-            items = _build_digest_items(payload["rows"], base_url)
-            if not items:
-                continue
-
-            context = {
-                "recipient_name": payload.get("username") or "there",
-                "frequency_label": frequency.value,
-                "frequency_title": frequency.value.capitalize(),
-                "item_count": len(items),
-                "items_text": _render_items_text(items),
-                "items_html": _render_items_html(items),
-                "notifications_url": f"{base_url}notifications" if base_url else "",
-            }
+        for recipient in recipients:
+            email = recipient["email"]
+            context = recipient["context"]
+            template = recipient.get("template")
 
             try:
-                subject, text_body, html_body = render_email_digest(context)
+                if template == "weekly":
+                    subject, text_body, html_body = render_weekly_digest(context)
+                else:
+                    subject, text_body, html_body = render_email_digest(context)
                 provider.send_email(email, subject, html_body, text_body)
             except Exception:
                 summary.failures += 1
                 logger.exception(
                     "Failed to send email digest",
-                    extra={"user_id": user_id, "frequency": frequency.value},
+                    extra={"user_id": recipient["user_id"], "frequency": frequency.value},
                 )
                 continue
 
-            delivered_notification_ids.extend(item["id"] for item in items)
+            delivered_notification_ids.extend(recipient.get("notification_ids", []))
             summary.digests_sent += 1
-            summary.notifications_delivered += len(items)
+            summary.notifications_delivered += int(recipient.get("notification_count", 0))
 
         if delivered_notification_ids:
             with connection.cursor() as cur:

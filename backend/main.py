@@ -1073,6 +1073,7 @@ def create_report_for_content(content_type: str, content_id: int, reporter: User
     return report
 
 from backend.app.routes.direct_messages import router as direct_messages_router
+from backend.app.routes.engagement import router as engagement_router
 from backend.app.routes.notifications import router as notifications_router
 from backend.app.routes.user_preferences import (
     router as notification_preferences_router,
@@ -1097,6 +1098,7 @@ app.add_middleware(
 )
 
 app.include_router(direct_messages_router)
+app.include_router(engagement_router)
 app.include_router(notifications_router)
 app.include_router(notification_preferences_router)
 
@@ -1647,6 +1649,18 @@ def list_trending_snippets(limit: int = Query(6, ge=1, le=50)):
         for snippet in snippets:
             snippet.tags = tag_map.get(snippet.id, [])
     return snippets
+
+@app.get("/api/search/saved/{saved_id}", response_model=SavedSearchOut)
+def read_saved_search_endpoint(
+    saved_id: int,
+    current_user: UserOut = Depends(get_current_user),
+):
+    with get_conn() as conn:
+        saved = fetch_saved_search(conn, saved_id, current_user.id)
+    if not saved:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Saved search not found")
+    return saved
+
 
 @app.get("/api/search/saved", response_model=List[SavedSearchOut])
 def list_saved_searches_endpoint(

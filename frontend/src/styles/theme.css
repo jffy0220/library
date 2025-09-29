@@ -1801,6 +1801,63 @@ textarea {
   color: var(--app-text);
 }
 
+.streak-card {
+  border-left: 4px solid #2563eb;
+}
+
+.streak-card__icon {
+  font-size: 2.5rem;
+  line-height: 1;
+}
+
+.streak-card__count {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.streak-card__count-number {
+  font-size: 2rem;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.streak-card__count-label {
+  font-size: 0.75rem;
+  color: var(--bs-secondary);
+}
+
+.streak-card__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 999px;
+  background-color: rgba(37, 99, 235, 0.12);
+  color: #1d4ed8;
+}
+
+.streak-card__badge-icon {
+  font-size: 1.1rem;
+}
+
+.streak-card__badge-text {
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.streak-card__detail {
+  font-size: 0.85rem;
+}
+
+.streak-card__details {
+  align-items: center;
+}
+
+.engagement-prompt {
+  border-radius: 0.75rem;
+}
+
 @media (max-width: 900px) {
   .instant-search__overlay {
     padding: 2.5rem 1rem;

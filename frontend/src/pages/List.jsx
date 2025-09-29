@@ -1,17 +1,22 @@
-import React, { useEffect, useState, useMemo } from 'react'
+import React, { useEffect, useState, useMemo, useCallback } from 'react'
 import {
   listSnippets,
   listTags,
   listPopularTags,
   getTrendingSnippets,
+  getSavedSearch,
+  getEngagementStatus,
 } from '../api'
 import SearchBar from '../components/SearchBar'
 import TagSelector from '../components/TagSelector'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../auth'
 import { useAddSnippet } from '../components/AddSnippetProvider'
+import StreakSummary from '../components/StreakSummary'
+import CapturePrompt from '../components/CapturePrompt'
 
 const PAGE_SIZE = 20
+const INSIGHT_PROMPT_KEY = 'insightPromptDismissedOn'
 
 export default function List() {
   const { user } = useAuth()
@@ -26,6 +31,11 @@ export default function List() {
   const [sidebarLoading, setSidebarLoading] = useState(true)
   const [sidebarError, setSidebarError] = useState(null)
   const [pendingPage, setPendingPage] = useState(null)
+  const [engagement, setEngagement] = useState(null)
+  const [engagementLoading, setEngagementLoading] = useState(false)
+  const [engagementError, setEngagementError] = useState(null)
+  const [savedSearchNotice, setSavedSearchNotice] = useState(null)
+  const [promptDismissed, setPromptDismissed] = useState(false)
 
   const q = searchParams.get('q') || ''
   const sort = searchParams.get('sort') || 'recent'
@@ -44,6 +54,113 @@ export default function List() {
     return []
   }, [searchParams])
   const tagsKey = selectedTags.join('|')
+
+  useEffect(() => {
+    if (!user) {
+      setEngagement(null)
+      setPromptDismissed(false)
+      return
+    }
+    const tz = (() => {
+      try {
+        return Intl.DateTimeFormat().resolvedOptions().timeZone
+      } catch (err) {
+        return undefined
+      }
+    })()
+    let ignore = false
+    setEngagementLoading(true)
+    setEngagementError(null)
+    ;(async () => {
+      try {
+        const data = await getEngagementStatus({ timezone: tz })
+        if (!ignore) {
+          setEngagement(data)
+        }
+      } catch (err) {
+        if (!ignore) {
+          console.error('Failed to load engagement status', err)
+          setEngagementError('We could not load your streak information.')
+        }
+      } finally {
+        if (!ignore) {
+          setEngagementLoading(false)
+        }
+      }
+    })()
+    return () => {
+      ignore = true
+    }
+  }, [user])
+
+  useEffect(() => {
+    if (!user) return
+    try {
+      const today = new Date().toISOString().slice(0, 10)
+      const stored = window.localStorage?.getItem(INSIGHT_PROMPT_KEY)
+      setPromptDismissed(stored === today)
+    } catch (err) {
+      setPromptDismissed(false)
+    }
+  }, [user])
+
+  const applySavedSearch = useCallback((saved) => {
+    if (!saved) return
+    const query = saved.query || {}
+    const tags = []
+    if (Array.isArray(query.tags)) {
+      tags.push(...query.tags)
+    }
+    if (Array.isArray(query.tag)) {
+      tags.push(...query.tag)
+    }
+    const normalizedTags = tags
+      .map((tag) => (tag || '').trim())
+      .filter(Boolean)
+
+    setPendingPage(null)
+    setSearchParams(() => {
+      const next = new URLSearchParams()
+      const nextQ = (query.q || '').trim()
+      if (nextQ) next.set('q', nextQ)
+      normalizedTags.forEach((tag) => next.append('tag', tag))
+      const sortValue = (query.sort || '').trim()
+      if (sortValue) next.set('sort', sortValue)
+      next.set('page', '1')
+      return next
+    })
+    setSavedSearchNotice({ id: saved.id, name: saved.name })
+  }, [setSearchParams])
+
+  useEffect(() => {
+    const savedSearchId = searchParams.get('savedSearch')
+    if (!user || !savedSearchId) return
+    let ignore = false
+    ;(async () => {
+      try {
+        const saved = await getSavedSearch(savedSearchId)
+        if (!ignore) {
+          applySavedSearch(saved)
+        }
+      } catch (err) {
+        if (!ignore) {
+          console.error('Unable to load saved search', err)
+          setSavedSearchNotice({ id: savedSearchId, name: 'Saved search', error: true })
+        }
+      } finally {
+        if (!ignore) {
+          setSearchParams((prev) => {
+            const next = new URLSearchParams(prev)
+            next.delete('savedSearch')
+            return next
+          })
+        }
+      }
+    })()
+    return () => {
+      ignore = true
+    }
+  }, [searchParams, user, applySavedSearch])
 
   const updateSearchParams = (updates, options = {}) => {
     const { preservePendingPage = false } = options
@@ -102,6 +219,22 @@ export default function List() {
     setPendingPage(target)
     updateSearchParams({ page: target }, { preservePendingPage: true })
   }
+
+  const handleDismissPrompt = useCallback(() => {
+    setPromptDismissed(true)
+    try {
+      const today = new Date().toISOString().slice(0, 10)
+      window.localStorage?.setItem(INSIGHT_PROMPT_KEY, today)
+    } catch (err) {
+      // ignore storage errors
+    }
+  }, [])
+
+  const handleClearSavedSearch = useCallback(() => {
+    setSavedSearchNotice(null)
+    setPendingPage(null)
+    setSearchParams(() => new URLSearchParams())
+  }, [setSearchParams])
 
   useEffect(() => {
     let ignore = false
@@ -189,9 +322,40 @@ export default function List() {
     : `${totalCount} snippet${totalCount === 1 ? '' : 's'} found`
   const isPaginating = pendingPage !== null && loading
   const trendingCommentTotal = trending.reduce((total, item) => total + (item.recent_comment_count || 0), 0)
+  const shouldShowPrompt = Boolean(
+    user &&
+    engagement &&
+    engagement.showCapturePrompt &&
+    !promptDismissed
+  )
 
   return (
     <div className="home-page">
+      {user ? (
+        <div className="mb-4 d-flex flex-column gap-3">
+          {engagementError && !engagementLoading ? (
+            <div className="alert alert-warning" role="status">
+              {engagementError}
+            </div>
+          ) : null}
+          {engagement?.streak ? <StreakSummary streak={engagement.streak} /> : null}
+          {shouldShowPrompt ? <CapturePrompt onDismiss={handleDismissPrompt} /> : null}
+          {savedSearchNotice ? (
+            <div className="alert alert-primary d-flex flex-column flex-md-row align-items-md-center justify-content-between gap-2">
+              <div>
+                {savedSearchNotice.error
+                  ? 'We could not load that saved search.'
+                  : (
+                    <>Showing saved search <strong>{savedSearchNotice.name}</strong>.</>
+                  )}
+              </div>
+              <button type="button" className="btn btn-outline-primary btn-sm" onClick={handleClearSavedSearch}>
+                Clear
+              </button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       {!user && (
         <div className="callout">
           Want to share your own discoveries?{' '}
