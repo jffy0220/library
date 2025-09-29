@@ -1,5 +1,8 @@
-const ANALYTICS_ENABLED = import.meta.env.VITE_ANALYTICS_ENABLED === 'true'
-const APP_VERSION = import.meta.env.VITE_APP_VERSION
+// Vite injects env vars on import.meta.env, but our TS config doesn't ship its types.
+// Cast import.meta to any to avoid relying on global type augmentation.
+const VITE_ENV = ((import.meta as any) && (import.meta as any).env) || {}
+const ANALYTICS_ENABLED = VITE_ENV.VITE_ANALYTICS_ENABLED === 'true'
+const APP_VERSION = VITE_ENV.VITE_APP_VERSION
 
 const FLUSH_INTERVAL = 2500
 const ANON_ID_KEY = 'analytics.anonymous_id'
