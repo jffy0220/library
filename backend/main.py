@@ -65,6 +65,7 @@ except ModuleNotFoundError as exc:
 try:
     from backend.group_service import (
         fetch_group,
+        fetch_group_member_ids,
         fetch_group_membership,
         is_private_group,
         is_site_admin,
@@ -75,6 +76,7 @@ except ModuleNotFoundError as exc:
         raise
     from group_service import (  # type: ignore[no-redef]
         fetch_group,
+        fetch_group_member_ids,
         fetch_group_membership,
         is_private_group,
         is_site_admin,
@@ -702,6 +704,7 @@ def _build_comment_notifications(
     comment_id: int,
     parent_comment_user_id: Optional[int],
     mention_user_ids: Iterable[int],
+    allowed_mention_user_ids: Optional[Iterable[int]] = None,
 ) -> List[NotificationCreate]:
     events: List[NotificationCreate] = []
     if snippet_owner_id and snippet_owner_id != actor_id:
@@ -724,7 +727,10 @@ def _build_comment_notifications(
                 type=NotificationType.REPLY_TO_COMMENT,
             )
         )
+    allowed_set = set(allowed_mention_user_ids) if allowed_mention_user_ids is not None else None
     for mention_user_id in sorted({uid for uid in mention_user_ids if uid != actor_id}):
+        if allowed_set is not None and mention_user_id not in allowed_set:
+            continue
         events.append(
             NotificationCreate(
                 userId=mention_user_id,
@@ -2026,6 +2032,11 @@ def create_snippet_comment(
     mentioned_user_map = _fetch_user_ids_by_usernames(mention_usernames)
     mention_user_ids = set(mentioned_user_map.values())
 
+    allowed_mention_user_ids: Optional[Set[int]] = None
+    if snippet.group_id is not None and mention_user_ids:
+        with get_conn() as conn:
+            allowed_mention_user_ids = fetch_group_member_ids(conn, snippet.group_id)
+    
     notification_events = _build_comment_notifications(
         current_user.id,
         snippet.created_by_user_id,
@@ -2033,6 +2044,7 @@ def create_snippet_comment(
         comment.id,
         parent_comment.user_id if parent_comment else None,
         mention_user_ids,
+        allowed_mention_user_ids,
     )
     _schedule_notification_tasks(background_tasks, notification_events)
     

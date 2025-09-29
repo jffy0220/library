@@ -9,23 +9,23 @@ from backend.group_service import can_manage_membership, can_update_group
 
 
 def test_admin_can_assign_owner_role():
-    assert can_manage_membership("admin", None, "moderator", "owner")
+    assert can_manage_membership("admin", None, "editor", "owner")
 
 
-def test_moderator_cannot_promote_to_owner():
-    assert not can_manage_membership("moderator", "moderator", "member", "owner")
+def test_site_moderator_cannot_promote_to_owner():
+    assert not can_manage_membership("moderator", "editor", "viewer", "owner")
 
 
-def test_owner_can_demote_moderator():
-    assert can_manage_membership("user", "owner", "moderator", "member")
+def test_owner_can_demote_editor():
+    assert can_manage_membership("user", "owner", "editor", "viewer")
 
 
-def test_member_cannot_promote_anyone():
-    assert not can_manage_membership("user", "member", "member", "moderator")
+def test_viewer_cannot_promote_anyone():
+    assert not can_manage_membership("user", "viewer", "viewer", "editor")
 
 
-def test_moderator_cannot_remove_owner():
-    assert not can_manage_membership("moderator", "moderator", "owner", None)
+def test_editor_cannot_remove_owner():
+    assert not can_manage_membership("moderator", "editor", "owner", None)
 
 
 def test_site_moderator_can_update_group_without_membership():
@@ -33,4 +33,4 @@ def test_site_moderator_can_update_group_without_membership():
 
 
 def test_regular_member_cannot_update_group():
-    assert not can_update_group("user", "member")
+    assert not can_update_group("user", "viewer")

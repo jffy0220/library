@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Set
 
 import psycopg2.extras
 
 GROUP_PRIVACY_VALUES = {"public", "private", "unlisted"}
-GROUP_ROLE_VALUES = {"owner", "moderator", "member"}
+GROUP_ROLE_VALUES = {"owner", "editor", "viewer"}
 SITE_MODERATOR_ROLES = {"moderator", "admin"}
 SITE_ADMIN_ROLES = {"admin"}
 
-_ROLE_PRIORITY = {"member": 1, "moderator": 2, "owner": 3}
+_ROLE_PRIORITY = {"viewer": 1, "editor": 2, "owner": 3}
 
 
 @dataclass
@@ -107,17 +107,17 @@ def can_update_group(actor_site_role: Optional[str], actor_group_role: Optional[
         return True
     if actor_site_role in SITE_MODERATOR_ROLES:
         return True
-    if actor_group_role in {"owner", "moderator"}:
+    if actor_group_role in {"owner", "editor"}:
         return True
     return False
 
 
-def _is_actor_group_moderator(actor_site_role: Optional[str], actor_group_role: Optional[str]) -> bool:
+def _is_actor_group_editor(actor_site_role: Optional[str], actor_group_role: Optional[str]) -> bool:
     if actor_site_role in SITE_ADMIN_ROLES:
         return True
     if actor_site_role in SITE_MODERATOR_ROLES:
         return True
-    if actor_group_role in {"owner", "moderator"}:
+    if actor_group_role in {"owner", "editor"}:
         return True
     return False
 
@@ -135,11 +135,11 @@ def can_manage_membership(
     if actor_group_role == "owner":
         return True
 
-    actor_is_moderator = _is_actor_group_moderator(actor_site_role, actor_group_role)
-    if not actor_is_moderator:
+    actor_is_editor = _is_actor_group_editor(actor_site_role, actor_group_role)
+    if not actor_is_editor:
         return False
 
-    # Moderators cannot assign or remove owners.
+    # Editors cannot assign or remove owners.
     if target_group_role == "owner":
         return False
     if desired_role == "owner":
@@ -151,3 +151,13 @@ def membership_role_priority(role: Optional[str]) -> int:
     if role is None:
         return 0
     return _ROLE_PRIORITY.get(role, 0)
+
+
+def fetch_group_member_ids(conn, group_id: int) -> Set[int]:
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT user_id FROM group_memberships WHERE group_id = %s",
+            (group_id,),
+        )
+        rows = cur.fetchall()
+    return {row[0] for row in rows}

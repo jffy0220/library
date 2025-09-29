@@ -483,7 +483,7 @@ def join_group(
             cur.execute(
                 """
                 INSERT INTO group_memberships (group_id, user_id, role, added_by_user_id)
-                VALUES (%s, %s, 'member', %s)
+                VALUES (%s, %s, 'viewer', %s)
                 ON CONFLICT (group_id, user_id) DO NOTHING
                 """,
                 (group_id, current_user.id, current_user.id),
@@ -512,7 +512,7 @@ def create_group_invite(
         actor_membership = fetch_group_membership(conn, group_id, current_user.id)
         actor_role = actor_membership["role"] if actor_membership else None
 
-        if not can_manage_membership(current_user.role, actor_role, None, "member"):
+        if not can_manage_membership(current_user.role, actor_role, None, "viewer"):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to invite members")
 
         if invited_user_id is None and invited_email is None:
@@ -616,7 +616,7 @@ def accept_group_invite(
             cur.execute(
                 """
                 INSERT INTO group_memberships (group_id, user_id, role, added_by_user_id)
-                VALUES (%s, %s, 'member', %s)
+                VALUES (%s, %s, 'viewer', %s)
                 ON CONFLICT (group_id, user_id) DO NOTHING
                 """,
                 (invite["group_id"], current_user.id, invite["invited_by_user_id"]),

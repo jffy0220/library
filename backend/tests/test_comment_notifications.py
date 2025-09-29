@@ -16,6 +16,7 @@ def test_build_comment_notifications_includes_expected_events():
         comment_id=101,
         parent_comment_user_id=3,
         mention_user_ids={4, 1, 2},
+        allowed_mention_user_ids={1, 3, 4},
     )
     assert [event.type for event in events] == [
         NotificationType.REPLY_TO_SNIPPET,
@@ -41,5 +42,19 @@ def test_build_comment_notifications_skips_self_targets():
         comment_id=44,
         parent_comment_user_id=5,
         mention_user_ids={5},
+        allowed_mention_user_ids={5},
     )
     assert events == []
+
+
+def test_build_comment_notifications_filters_mentions_to_allowed_participants():
+    events = _build_comment_notifications(
+        actor_id=7,
+        snippet_owner_id=None,
+        snippet_id=22,
+        comment_id=303,
+        parent_comment_user_id=None,
+        mention_user_ids={4, 6},
+        allowed_mention_user_ids={4},
+    )
+    assert [event.user_id for event in events] == [4]
