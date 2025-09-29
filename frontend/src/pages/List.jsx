@@ -16,6 +16,7 @@ import { useAuth } from '../auth'
 import { useAddSnippet } from '../components/AddSnippetProvider'
 import StreakSummary from '../components/StreakSummary'
 import CapturePrompt from '../components/CapturePrompt'
+import { capture } from '../lib/analytics'
 
 const PAGE_SIZE = 20
 const INSIGHT_PROMPT_KEY = 'insightPromptDismissedOn'
@@ -639,6 +640,7 @@ export default function List() {
     }
 
     ;(async () => {
+      const started = typeof performance !== 'undefined' ? performance.now() : 0
       try {
         const data = await listSnippets({
           q: q || undefined,
@@ -663,6 +665,37 @@ export default function List() {
           total: typeof data?.total === 'number' ? data.total : items.length,
           nextPage: typeof data?.nextPage === 'number' ? data.nextPage : null,
         })
+        const durationMs = typeof performance !== 'undefined' ? Math.round(performance.now() - started) : undefined
+        const trimmedQuery = (q || '').trim()
+        const hasSearchCriteria = Boolean(trimmedQuery || book || selectedTags.length > 0)
+        if (isFirstPage && hasSearchCriteria) {
+          const filtersPayload = {
+            tags: [...selectedTags],
+            book: book || null,
+            date_range: {
+              from: null,
+              to: null,
+            },
+          }
+          capture({
+            event: 'search_performed',
+            duration_ms: durationMs,
+            props: {
+              q_len: trimmedQuery.length,
+              filters: filtersPayload,
+              results_count: items.length,
+            },
+          })
+          if (items.length === 0) {
+            capture({
+              event: 'search_zero_results',
+              props: {
+                q: trimmedQuery,
+                filters: filtersPayload,
+              },
+            })
+          }
+        }
         lastQueryKeyRef.current = queryKey
       } catch (err) {
         if (ignore || err?.response?.status === 401) return

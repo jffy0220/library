@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { register as registerAccount } from '../api'
+import { capture } from '../lib/analytics'
 
 export default function Register() {
   const [form, setForm] = useState({
@@ -37,6 +38,12 @@ export default function Register() {
       setSuccess({
         message: response?.message || 'Registration successful.',
         expiresAt: response?.expires_at || null
+      })
+      capture({
+        event: 'user_signed_up',
+        props: {
+          has_email: Boolean(payload.email)
+        }
       })
     } catch (err) {
       const detail = err?.response?.data?.detail

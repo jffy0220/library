@@ -15,6 +15,7 @@ import {
   updateSavedSearch
 } from '../api'
 import useDebouncedValue from '../hooks/useDebouncedValue'
+import { capture } from '../lib/analytics'
 
 const QUICK_RANGES = [
   { key: 'any', label: 'Any time' },
@@ -227,6 +228,8 @@ export default function InstantSearch({ open, onOpen, onClose }) {
     setLoading(true)
     setError(null)
 
+    const started = typeof performance !== 'undefined' ? performance.now() : 0
+
     searchSnippets(params)
       .then((data) => {
         if (cancelled) return
@@ -241,6 +244,36 @@ export default function InstantSearch({ open, onOpen, onClose }) {
           }
           return items.length > 0 ? 0 : -1
         })
+        const durationMs = typeof performance !== 'undefined' ? Math.round(performance.now() - started) : undefined
+        const hasCriteria = Boolean(trimmedQuery || tags.length > 0 || trimmedBook || createdFrom)
+        if (page === 1 && hasCriteria) {
+          const filtersPayload = {
+            tags: [...tags],
+            book: trimmedBook || null,
+            date_range: {
+              from: createdFrom || null,
+              to: null
+            }
+          }
+          capture({
+            event: 'search_performed',
+            duration_ms: durationMs,
+            props: {
+              q_len: trimmedQuery.length,
+              filters: filtersPayload,
+              results_count: items.length
+            }
+          })
+          if (items.length === 0) {
+            capture({
+              event: 'search_zero_results',
+              props: {
+                q: trimmedQuery,
+                filters: filtersPayload
+              }
+            })
+          }
+        }
       })
       .catch((requestError) => {
         if (cancelled) return

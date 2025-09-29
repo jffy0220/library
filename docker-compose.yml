@@ -1,8 +1,16 @@
+x-app-env: &app-env
+  ANALYTICS_ENABLED: ${ANALYTICS_ENABLED:-true}
+  ANALYTICS_IP_SALT: ${ANALYTICS_IP_SALT:-change-me}
+  APP_VERSION: ${APP_VERSION:-0.1.0}
+  VITE_ANALYTICS_ENABLED: ${VITE_ANALYTICS_ENABLED:-true}
+
 services:
   postgres:
     image: postgres:16
     container_name: book-snippets-postgres
     env_file: .env
+    environment:
+      <<: *app-env
     ports:
       - "5432:5432"
     volumes:

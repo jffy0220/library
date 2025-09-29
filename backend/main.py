@@ -1,6 +1,5 @@
-+17
--3
-
+import asyncio
+import contextlib
 import logging
 import os
 import re
@@ -21,6 +20,7 @@ from fastapi import (
     FastAPI,
     HTTPException,
     Query,
+    Request,
     Response,
     status,
 )
@@ -82,6 +82,20 @@ except ModuleNotFoundError as exc:
         is_site_admin,
         is_site_moderator,
     )
+
+try:
+    from backend.analytics import router as analytics_router
+    from backend.analytics_config import ANALYTICS_ENABLED
+    from backend.analytics_queue import AnalyticsQueue, create_analytics_pool
+    from backend.middleware_perf import PerformanceAnalyticsMiddleware
+except ModuleNotFoundError as exc:
+    if exc.name != "backend":
+        raise
+    from analytics import router as analytics_router  # type: ignore[no-redef]
+    from analytics_config import ANALYTICS_ENABLED  # type: ignore[no-redef]
+    from analytics_queue import AnalyticsQueue, create_analytics_pool  # type: ignore[no-redef]
+    from middleware_perf import PerformanceAnalyticsMiddleware  # type: ignore[no-redef]
+
 
 load_dotenv()
 
@@ -343,6 +357,36 @@ def send_password_reset_email(
 
 def get_conn():
     return psycopg2.connect(**DB_CFG)
+
+def _queue_analytics_event(event: Dict[str, Any]) -> None:
+    queue = getattr(app.state, "analytics_queue", None)
+    if queue:
+        queue.put_nowait(event)
+
+
+def _build_server_event(
+    name: str,
+    *,
+    request: Optional[Request],
+    user_id: Optional[int],
+    props: Optional[Dict[str, Any]] = None,
+    duration_ms: Optional[int] = None,
+    context: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    base_context: Dict[str, Any] = {"source": "api"}
+    if context:
+        base_context.update(context)
+    return {
+        "event": name,
+        "ts": datetime.utcnow(),
+        "user_id": str(user_id) if user_id is not None else None,
+        "anonymous_id": "server",
+        "session_id": "server",
+        "route": request.url.path if request else None,
+        "props": props or {},
+        "context": base_context,
+        "duration_ms": duration_ms,
+    }
 
 class SnippetBase(BaseModel):
     date_read: Optional[date] = None
@@ -1094,6 +1138,8 @@ app = FastAPI(title="Book Snippets API")
 
 start_digest_scheduler()
 
+app.add_middleware(PerformanceAnalyticsMiddleware)
+
 # Vite proxy origin
 app.add_middleware(
     CORSMiddleware,
@@ -1107,9 +1153,43 @@ app.include_router(direct_messages_router)
 app.include_router(engagement_router)
 app.include_router(notifications_router)
 app.include_router(notification_preferences_router)
+app.include_router(analytics_router)
+
+
+@app.on_event("startup")
+async def setup_analytics() -> None:
+    loop = asyncio.get_running_loop()
+    pool = await create_analytics_pool()
+    queue = AnalyticsQueue(pool=pool, loop=loop, enabled=ANALYTICS_ENABLED)
+    app.state.analytics_pool = pool
+    app.state.analytics_queue = queue
+    app.state.analytics_task = None
+    if queue.enabled:
+        app.state.analytics_task = asyncio.create_task(queue.run())
+
+
+@app.on_event("shutdown")
+async def teardown_analytics() -> None:
+    task = getattr(app.state, "analytics_task", None)
+    queue = getattr(app.state, "analytics_queue", None)
+    pool = getattr(app.state, "analytics_pool", None)
+
+    if queue:
+        queue.close()
+
+    if task:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    if queue:
+        await queue.flush()
+
+    if pool:
+        await pool.close()
 
 @app.post("/api/auth/register", response_model=RegisterResponse, status_code=status.HTTP_201_CREATED)
-def register(payload: RegisterRequest, background_tasks: BackgroundTasks):
+def register(payload: RegisterRequest, request: Request, background_tasks: BackgroundTasks):
     username = payload.username.strip()
     email = payload.email.strip().lower()
     password = payload.password
@@ -1165,6 +1245,14 @@ def register(payload: RegisterRequest, background_tasks: BackgroundTasks):
         expires_at,
     )
 
+    signup_event = _build_server_event(
+        "user_signed_up",
+        request=request,
+        user_id=row["id"],
+        props={"has_email": bool(email)},
+    )
+    _queue_analytics_event(signup_event)
+
     return RegisterResponse(
         message="Registration successful. Check your email for verification instructions.",
         expires_at=expires_at,
@@ -1208,7 +1296,7 @@ def request_password_reset(payload: PasswordResetRequest, background_tasks: Back
     )
 
 @app.post("/api/auth/login", response_model=UserOut)
-def login(payload: LoginRequest, response: Response):
+def login(payload: LoginRequest, response: Response, request: Request):
     identifier = payload.username.strip()
     user_row = get_user_with_password(identifier)
     if not user_row or not bcrypt.verify(payload.password, user_row["password_hash"]):
@@ -1226,6 +1314,13 @@ def login(payload: LoginRequest, response: Response):
         path="/",
     )
 
+    login_event = _build_server_event(
+        "user_logged_in",
+        request=request,
+        user_id=user_row["id"],
+    )
+    _queue_analytics_event(login_event)
+
     return UserOut(
         id=user_row["id"],
         username=user_row["username"],
@@ -1235,7 +1330,7 @@ def login(payload: LoginRequest, response: Response):
 
 
 @app.post("/api/auth/logout")
-def logout(response: Response):
+def logout(response: Response, request: Request):
     response.delete_cookie(
         SESSION_COOKIE_NAME,
         path="/",
@@ -1243,6 +1338,20 @@ def logout(response: Response):
         samesite="lax",
         secure=SESSION_COOKIE_SECURE,
     )
+    user_id = None
+    token = request.cookies.get(SESSION_COOKIE_NAME)
+    if token:
+        try:
+            payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+            user_id = payload.get("sub")
+        except JWTError:
+            user_id = None
+    logout_event = _build_server_event(
+        "user_logged_out",
+        request=request,
+        user_id=user_id,
+    )
+    _queue_analytics_event(logout_event)
     return {"ok": True}
 
 
@@ -1419,6 +1528,7 @@ def list_snippets(
 
 @app.get("/api/search/snippets", response_model=SnippetSearchResponse)
 def search_snippets(
+    request: Request,
     q: Optional[str] = Query(None, description="Full-text search query"),
     tags_csv: Optional[str] = Query(
         None, alias="tags", description="Comma separated list of tags"
@@ -1437,6 +1547,7 @@ def search_snippets(
     page: int = Query(1, ge=1),
     current_user: Optional[UserOut] = Depends(get_optional_current_user),
 ):
+    started = time.perf_counter()
     search_term = (q or "").strip()
     raw_tags: List[str] = []
     if tags_csv:
@@ -1625,7 +1736,46 @@ def search_snippets(
     if (page - 1) * limit + len(results) < total:
         next_page = page + 1
 
-    return SnippetSearchResponse(items=results, total=total, next_page=next_page)
+    response = SnippetSearchResponse(items=results, total=total, next_page=next_page)
+
+    duration_ms = int((time.perf_counter() - started) * 1000)
+    has_filters = bool(search_term or tag_slugs or book_filter or created_from or created_to)
+    if has_filters:
+        filters_payload = {
+            "tags": tag_slugs,
+            "book": book_filter or None,
+            "date_range": {
+                "from": created_from.isoformat() if created_from else None,
+                "to": created_to.isoformat() if created_to else None,
+            },
+        }
+        props = {
+            "q_len": len(search_term),
+            "filters": filters_payload,
+            "results_count": len(results),
+        }
+        event = _build_server_event(
+            "search_performed",
+            request=request,
+            user_id=viewer_id,
+            props=props,
+            duration_ms=duration_ms,
+        )
+        _queue_analytics_event(event)
+        if len(results) == 0:
+            zero_props = {
+                "q": search_term,
+                "filters": filters_payload,
+            }
+            zero_event = _build_server_event(
+                "search_zero_results",
+                request=request,
+                user_id=viewer_id,
+                props=zero_props,
+            )
+            _queue_analytics_event(zero_event)
+
+    return response
 
 @app.get("/api/snippets/trending", response_model=List[SnippetWithStats])
 def list_trending_snippets(limit: int = Query(6, ge=1, le=50)):
@@ -1835,6 +1985,7 @@ def list_popular_tags(
 @app.post("/api/snippets", status_code=201)
 def create_snippet(
     payload: SnippetCreate,
+    request: Request,
     background_tasks: BackgroundTasks,
     current_user: UserOut = Depends(get_current_user),
 ):
@@ -1886,12 +2037,27 @@ def create_snippet(
         conn.commit()
 
     schedule_trending_refresh(background_tasks)
+    props = {
+        "length": len((payload.text_snippet or "").strip()),
+        "has_thoughts": bool((payload.thoughts or "").strip()),
+        "book_id": payload.book_name,
+        "tags_count": len(payload.tags or []),
+        "source": "api",
+    }
+    event = _build_server_event(
+        "snippet_created",
+        request=request,
+        user_id=current_user.id,
+        props=props,
+    )
+    _queue_analytics_event(event)
     return {"id": new_id}
 
 @app.patch("/api/snippets/{sid}", response_model=SnippetOut)
 def update_snippet(
     sid: int,
     payload: SnippetUpdate,
+    request: Request,
     background_tasks: BackgroundTasks,
     current_user: UserOut = Depends(get_current_user),
 ):
@@ -1943,12 +2109,49 @@ def update_snippet(
     updated = fetch_snippet(sid)
     if updated is None:
         raise HTTPException(status_code=500, detail="Unable to load snippet")
+    
+    changed_fields: List[str] = []
+    if (snippet.date_read or None) != (updated.date_read or None):
+        changed_fields.append("date_read")
+    if (snippet.book_name or "").strip() != (updated.book_name or "").strip():
+        changed_fields.append("book_name")
+    if (snippet.page_number or None) != (updated.page_number or None):
+        changed_fields.append("page_number")
+    if (snippet.chapter or "").strip() != (updated.chapter or "").strip():
+        changed_fields.append("chapter")
+    if (snippet.verse or "").strip() != (updated.verse or "").strip():
+        changed_fields.append("verse")
+    if (snippet.text_snippet or "").strip() != (updated.text_snippet or "").strip():
+        changed_fields.append("text_snippet")
+    if (snippet.thoughts or "").strip() != (updated.thoughts or "").strip():
+        changed_fields.append("thoughts")
+    if snippet.visibility != updated.visibility:
+        changed_fields.append("visibility")
+    if (snippet.group_id or None) != (updated.group_id or None):
+        changed_fields.append("group_id")
+    original_tags = sorted(tag.name for tag in snippet.tags)
+    updated_tags = sorted(tag.name for tag in updated.tags)
+    if original_tags != updated_tags:
+        changed_fields.append("tags")
+
+    props = {
+        "changed_fields": sorted(set(changed_fields)),
+        "source": "api",
+    }
+    event = _build_server_event(
+        "snippet_edited",
+        request=request,
+        user_id=current_user.id,
+        props=props,
+    )
+    _queue_analytics_event(event)
     return updated
 
 
 @app.delete("/api/snippets/{sid}", response_model=SnippetOut)
 def delete_snippet(
     sid: int,
+    request: Request,
     background_tasks: BackgroundTasks,
     current_user: UserOut = Depends(get_current_user),
 ):
@@ -1963,6 +2166,13 @@ def delete_snippet(
         conn.commit()
 
     schedule_trending_refresh(background_tasks)
+    event = _build_server_event(
+        "snippet_deleted",
+        request=request,
+        user_id=current_user.id,
+        props={"snippet_id": snippet.id, "source": "api"},
+    )
+    _queue_analytics_event(event)
     return snippet
 
 @app.get("/api/snippets/{sid}", response_model=SnippetOut)

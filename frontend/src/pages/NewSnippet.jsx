@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { createSnippet, listTags } from '../api'
+import { capture } from '../lib/analytics'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth'
 import TagSelector from '../components/TagSelector'
@@ -66,6 +67,16 @@ export default function NewSnippet() {
     }
     try {
       await createSnippet(payload)
+      capture({
+        event: 'snippet_created',
+        props: {
+          length: payload.text_snippet?.length || 0,
+          has_thoughts: Boolean(payload.thoughts),
+          book_id: payload.book_name,
+          tags_count: payload.tags?.length || 0,
+          source: 'web'
+        }
+      })
       nav('/')
     } catch (e) {
       setMsg('Failed to save snippet.')

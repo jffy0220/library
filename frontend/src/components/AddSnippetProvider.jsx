@@ -10,6 +10,7 @@ import React, {
 } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { createSnippet, deleteSnippet, listBooks, listTags } from '../api'
+import { capture } from '../lib/analytics'
 import { useAuth } from '../auth'
 import TagInput from './TagInput'
 
@@ -394,6 +395,16 @@ export function AddSnippetProvider({ children }) {
         thoughts: trimmedThoughts || null,
       }
       const result = await createSnippet(payload)
+      capture({
+        event: 'snippet_created',
+        props: {
+          length: trimmedText.length,
+          has_thoughts: Boolean(trimmedThoughts),
+          book_id: trimmedBook || null,
+          tags_count: form.tags.length,
+          source: 'web'
+        }
+      })
       setIsOpen(false)
       resetForm()
       setSubmitting(false)

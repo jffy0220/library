@@ -1,5 +1,5 @@
-import React from 'react'
-import { Routes, Route, Navigate, Outlet } from 'react-router-dom'
+import React, { useEffect } from 'react'
+import { Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom'
 import Navbar from './components/Navbar'
 import { AddSnippetProvider } from './components/AddSnippetProvider'
 import List from './pages/List'
@@ -19,6 +19,7 @@ import GroupInviteAccept from './pages/Groups/GroupInviteAccept'
 import GroupsLayout from './pages/Groups/GroupsLayout'
 import { AuthProvider, useAuth } from './auth'
 import { NotificationPreferencesProvider } from './hooks/useNotificationPreferences'
+import { setUserId, trackPageView } from './lib/analytics'
 
 function RequireAuth() {
   const { user, loading } = useAuth()
@@ -69,9 +70,25 @@ function AppLayout() {
   )
 }
 
+function AnalyticsTracker() {
+  const location = useLocation()
+  const { user } = useAuth()
+
+  useEffect(() => {
+    trackPageView()
+  }, [location.pathname, location.search])
+
+  useEffect(() => {
+    setUserId(user?.id ? String(user.id) : null)
+  }, [user])
+
+  return null
+}
+
 export default function App() {
   return (
     <AuthProvider>
+      <AnalyticsTracker />
       <NotificationPreferencesProvider>
         <AddSnippetProvider>
           <Routes>

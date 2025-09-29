@@ -17,6 +17,7 @@ import {
 import { useAuth } from '../auth'
 import TagSelector from '../components/TagSelector'
 import GroupSelector from '../components/GroupSelector'
+import { capture } from '../lib/analytics'
 
 const makeEmptySnippetForm = () => ({
   date_read: '',
@@ -298,6 +299,7 @@ export default function ViewSnippet() {
     }
 
     setSnippetSaving(true)
+    const previous = row
     try {
       const updated = await updateSnippet(row.id, payload)
       setRow(updated)
@@ -306,6 +308,34 @@ export default function ViewSnippet() {
       setEditingSnippet(false)
       setSnippetForm(makeEmptySnippetForm())
       setSnippetTags([])
+      if (updated) {
+        const changedFields = new Set()
+        if ((previous?.date_read || null) !== (updated.date_read || null)) changedFields.add('date_read')
+        if ((previous?.book_name || '').trim() !== (updated.book_name || '').trim()) changedFields.add('book_name')
+        if ((previous?.page_number || null) !== (updated.page_number || null)) changedFields.add('page_number')
+        if ((previous?.chapter || '').trim() !== (updated.chapter || '').trim()) changedFields.add('chapter')
+        if ((previous?.verse || '').trim() !== (updated.verse || '').trim()) changedFields.add('verse')
+        if ((previous?.text_snippet || '').trim() !== (updated.text_snippet || '').trim()) changedFields.add('text_snippet')
+        if ((previous?.thoughts || '').trim() !== (updated.thoughts || '').trim()) changedFields.add('thoughts')
+        if ((previous?.visibility || 'public') !== (updated.visibility || 'public')) changedFields.add('visibility')
+        if ((previous?.group_id ?? null) !== (updated.group_id ?? null)) changedFields.add('group_id')
+        const prevTags = Array.isArray(previous?.tags)
+          ? previous.tags.map((tag) => (typeof tag === 'string' ? tag : tag.name)).sort()
+          : []
+        const nextTags = Array.isArray(updated.tags)
+          ? updated.tags.map((tag) => (typeof tag === 'string' ? tag : tag.name)).sort()
+          : []
+        if (prevTags.join('|') !== nextTags.join('|')) changedFields.add('tags')
+        if (changedFields.size > 0) {
+          capture({
+            event: 'snippet_edited',
+            props: {
+              changed_fields: Array.from(changedFields),
+              source: 'web'
+            }
+          })
+        }
+      }
     } catch (err) {
       const detail = err?.response?.data?.detail
       setSnippetAlert({ type: 'danger', message: detail || 'Failed to update snippet.' })
@@ -321,8 +351,16 @@ export default function ViewSnippet() {
     }
     setSnippetAlert(null)
     setDeletingSnippet(true)
+    const snippetId = row.id
     try {
       await deleteSnippet(row.id)
+      capture({
+        event: 'snippet_deleted',
+        props: {
+          snippet_id: snippetId,
+          source: 'web'
+        }
+      })
       navigate('/', { replace: true })
     } catch (err) {
       const detail = err?.response?.data?.detail

@@ -2,6 +2,7 @@ import React from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import App from './App'
+import { initWebVitals } from './lib/analytics'
 import 'bootstrap/dist/css/bootstrap.min.css'
 import './styles/theme.css'
 
@@ -10,6 +11,8 @@ createRoot(document.getElementById('root')).render(
     <App />
   </BrowserRouter>
 )
+
+initWebVitals()
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
