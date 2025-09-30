@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, fields, replace
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Dict, Optional, Sequence, Set
+from typing import Dict, Optional, Sequence, Set, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -59,7 +59,7 @@ class FeatureBundle:
 
         return replace(self, storage_quota_gb=self.storage_quota_gb + increment_gb)
 
-    def to_flags(self) -> Dict[str, int | bool]:
+    def to_flags(self) -> Dict[str, Union[int, bool]]:
         """Serialize bundle to flattened flag keys."""
 
         return {
@@ -156,7 +156,7 @@ class EntitlementPayload(BaseModel):
     """Computed entitlement payload returned to clients."""
 
     plan: PlanKey
-    feature_flags: Dict[str, int | bool]
+    feature_flags: Dict[str, Union[int, bool]]
     subscription_id: Optional[str]
     organization_id: Optional[str] = None
     role: Optional[MembershipRole] = None

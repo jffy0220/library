@@ -1,6 +1,7 @@
 """Core service coordinating billing flows with external providers."""
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional, Protocol, Sequence
@@ -137,7 +138,14 @@ class BillingRepository(Protocol):
         ...
 
 
-@dataclass(slots=True)
+# ``slots`` support for ``dataclass`` was added in Python 3.10. The backend
+# can run under Python 3.9 in some environments (e.g., local development), so
+# we enable slots conditionally to maintain compatibility while preserving the
+# optimization where available.
+_dataclass_kwargs = {"slots": True} if sys.version_info >= (3, 10) else {}
+
+
+@dataclass(**_dataclass_kwargs)
 class BillingService:
     """Coordinates purchase intents, subscriptions, and notifications."""
 
