@@ -1028,9 +1028,11 @@ def get_optional_current_user(
     if not session_token:
         return None
 
-    user = resolve_user_from_session_token(session_token)
-    if user is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    try:
+        user = resolve_user_from_session_token(session_token)
+    except Exception:
+        logger.exception("Unexpected error while resolving optional session token")
+        return None
     return user
 
 
