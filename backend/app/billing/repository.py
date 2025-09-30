@@ -23,11 +23,11 @@ from .models import (
 from ..entitlements.models import BillingInterval, PlanKey, SubscriptionStatus
 
 try:  # pragma: no cover - resolve connection helper when imported from FastAPI app
-    from backend.main import get_conn
+    from backend.app_context import get_conn
 except ModuleNotFoundError as exc:  # pragma: no cover
     if exc.name != "backend":
         raise
-    from ..main import get_conn  # type: ignore[no-redef]
+    from ...app_context import get_conn  # type: ignore[no-redef]
 
 
 @contextmanager

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Response, status
 
@@ -40,7 +40,7 @@ _SESSION_COOKIE_NAME = os.getenv("SESSION_COOKIE_NAME", "session")
 
 
 def _get_current_user(
-    session_token: str | None = Cookie(None, alias=_SESSION_COOKIE_NAME),
+    session_token: Optional[str] = Cookie(None, alias=_SESSION_COOKIE_NAME),
 ):
     resolved = _get_current_user_callable()
     return resolved(session_token=session_token)

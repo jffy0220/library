@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Dict, Optional, Union
 
 from ..entitlements import EntitlementPayload
 from .enforcement import require_entitlement
@@ -15,7 +16,7 @@ class EntitlementContext:
     payload: EntitlementPayload
 
     @property
-    def feature_flags(self) -> dict[str, int | bool]:
+    def feature_flags(self) -> Dict[str, Union[int, bool]]:
         return dict(self.payload.feature_flags)
 
     @property
@@ -45,7 +46,7 @@ class EntitlementContext:
         *,
         usage_gb: float,
         pending_upload_gb: float = 0.0,
-        threshold: float | None = None,
+        threshold: Optional[float] = None,
     ) -> StorageQuotaEvaluation:
         """Inspect whether storage operations should proceed or warn."""
 
@@ -62,7 +63,7 @@ class EntitlementContext:
         *,
         usage_gb: float,
         pending_upload_gb: float = 0.0,
-        threshold: float | None = None,
+        threshold: Optional[float] = None,
         error_code: str = "storage_quota_exceeded",
     ) -> StorageQuotaEvaluation:
         """Raise when projected storage usage violates the entitlement quota."""

@@ -8,7 +8,7 @@ import time
 from contextlib import contextmanager
 from datetime import datetime
 from textwrap import shorten
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 from urllib.parse import urljoin
 
 import psycopg2
@@ -264,7 +264,7 @@ def _prepare_preferences_payload(user_id: int, update: Mapping[str, Any]) -> Map
 
 
 def create_notification(
-    event: NotificationCreate | Mapping[str, Any],
+    event: Union[NotificationCreate, Mapping[str, Any]],
     *,
     conn: Optional[PgConnection] = None,
 ) -> Notification:
@@ -461,7 +461,7 @@ def get_preferences(
 
 def upsert_preferences(
     user_id: int,
-    preferences: NotificationPreferencesUpdate | Mapping[str, Any],
+    preferences: Union[NotificationPreferencesUpdate, Mapping[str, Any]],
     *,
     conn: Optional[PgConnection] = None,
 ) -> NotificationPreferences:

@@ -1,7 +1,7 @@
 """Helpers for enforcing entitlement checks on API and service layers."""
 from __future__ import annotations
 
-from typing import Mapping
+from typing import Mapping, Optional
 
 from .exceptions import FeatureGateError
 
@@ -11,7 +11,7 @@ def require_entitlement(
     flag: str,
     *,
     error_code: str = "entitlement_required",
-    message: str | None = None,
+    message: Optional[str] = None,
 ) -> None:
     """Ensure a boolean feature flag is enabled before proceeding.
 

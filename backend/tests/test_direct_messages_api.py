@@ -3,6 +3,7 @@
 
 from datetime import datetime, timezone
 from types import SimpleNamespace
+from typing import Optional
 
 import pytest
 from fastapi import HTTPException
@@ -76,7 +77,14 @@ def test_list_thread_messages_passes_cursor(monkeypatch):
     expected = DirectMessageList(messages=[], nextCursor=None, hasMore=False)
     captured = {}
 
-    def fake_list_messages(thread_id: int, *, user_id: int, limit: int, cursor: int | None, conn=None):
+    def fake_list_messages(
+        thread_id: int,
+        *,
+        user_id: int,
+        limit: int,
+        cursor: Optional[int],
+        conn=None,
+    ):
         captured["thread_id"] = thread_id
         captured["user_id"] = user_id
         captured["limit"] = limit

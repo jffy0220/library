@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Dict, Union
 
 from .exceptions import FeatureGateError
 
@@ -20,7 +21,7 @@ class StorageQuotaEvaluation:
     should_warn: bool
     allowed: bool
 
-    def to_dict(self) -> dict[str, float | int | bool]:
+    def to_dict(self) -> Dict[str, Union[float, int, bool]]:
         """Serialize the evaluation for logging or telemetry."""
 
         return {
