@@ -577,32 +577,32 @@ export function AddSnippetProvider({ children }) {
                     disabled={submitting}
                   />
                 </div>
-                <div className="col-sm-4">
-                  <label className="form-label" htmlFor={tagsInputId}>
-                    Tags
-                  </label>
-                  <TagInput
-                    inputId={tagsInputId}
-                    availableTags={tagOptions}
-                    value={form.tags}
-                    onChange={handleTagChange}
-                    disabled={submitting}
-                    placeholder="Add a tag and press Enter"
-                  />
-                  <div className="form-text">
-                    {loadingSuggestions
-                      ? 'Loading tag suggestions…'
-                      : tagSuggestionsError || 'Use Enter, Tab, or comma to add tags on the fly.'}
-                  </div>
-                  {tagSuggestionsError ? (
-                    <button
-                      type="button"
-                      className="btn btn-link btn-sm p-0 mt-1"
-                      onClick={handleRetrySuggestions}
-                    >
-                      Retry loading suggestions
-                    </button>
-                  ) : null}
+                <div>
+                <label className="form-label" htmlFor={tagsInputId}>
+                  Tags
+                </label>
+                <TagInput
+                  inputId={tagsInputId}
+                  availableTags={tagOptions}
+                  value={form.tags}
+                  onChange={handleTagChange}
+                  disabled={submitting}
+                  placeholder="Add a tag and press Enter"
+                />
+                <div className="form-text">
+                  {loadingSuggestions
+                    ? 'Loading tag suggestions…'
+                    : tagSuggestionsError || 'Use Enter, Tab, or comma to add tags on the fly.'}
+                </div>
+                {tagSuggestionsError ? (
+                  <button
+                    type="button"
+                    className="btn btn-link btn-sm p-0 mt-1"
+                    onClick={handleRetrySuggestions}
+                  >
+                    Retry loading suggestions
+                  </button>
+                ) : null}
                 </div>
               </div>
 

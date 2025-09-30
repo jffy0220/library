@@ -160,6 +160,11 @@ function SnippetDetailPanel({
     return () => window.clearTimeout(timeout)
   }, [copyState])
 
+  const snippetText = snippet?.text_snippet || ''
+  const snippetTitle = snippet?.book_name || 'Untitled'
+  const highlightedSnippet = useMemo(() => highlightText(snippetText, highlightTerms), [snippetText, highlightTerms])
+  const highlightedTitle = useMemo(() => highlightText(snippetTitle, highlightTerms), [snippetTitle, highlightTerms])
+
   if (!snippet) {
     return (
       <div className="detail-panel detail-panel--empty" role="region" aria-live="polite">
@@ -167,13 +172,6 @@ function SnippetDetailPanel({
       </div>
     )
   }
-
-  const snippetText = snippet.text_snippet || ''
-  const highlightedSnippet = useMemo(() => highlightText(snippetText, highlightTerms), [snippetText, highlightTerms])
-  const highlightedTitle = useMemo(
-    () => highlightText(snippet.book_name || 'Untitled', highlightTerms),
-    [snippet.book_name, highlightTerms]
-  )
 
   const handleCopy = async () => {
     try {

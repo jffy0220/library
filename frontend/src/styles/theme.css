@@ -549,7 +549,7 @@ a:focus {
 }
 
 .app-content__inner {
-  max-width: 1200px;
+  max-width: 1400px;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
@@ -1878,7 +1878,7 @@ textarea {
 
 .library-shell {
   display: grid;
-  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr) minmax(280px, 360px);
+  grid-template-columns: minmax(260px, 340px) minmax(0, 1fr) minmax(320px, 480px);
   grid-template-areas: 'filters results details';
   gap: 1.75rem;
   margin-top: 2rem;
