@@ -62,6 +62,19 @@ class InvitationTokenGenerator(Protocol):
         ...
 
 
+class EntitlementInvalidator(Protocol):
+    """Interface for invalidating entitlement cache entries."""
+
+    def invalidate_user(self, user_id: str) -> None:
+        ...
+
+    def invalidate_organization(self, organization_id: str) -> None:
+        ...
+
+    def invalidate_subscription(self, subscription_id: str) -> None:
+        ...
+
+
 ROLE_HIERARCHY = {
     MembershipRole.MEMBER: 1,
     MembershipRole.ADMIN: 2,
@@ -92,6 +105,7 @@ class OrganizationService:
     audit_logger: AuditLogger
     seat_publisher: SeatEventPublisher
     token_generator: InvitationTokenGenerator
+    entitlement_invalidator: EntitlementInvalidator
     clock: Optional[Callable[[], datetime]] = None
     invitation_ttl: timedelta = timedelta(days=7)
 
@@ -140,6 +154,7 @@ class OrganizationService:
         if invitation is None:
             raise LookupError("Invitation not found")
 
+        organization = self.repository.get_organization(invitation.organization_id)
         now = _current_time(self.clock)
         if invitation.expires_at <= now:
             raise PermissionError("Invitation has expired")
@@ -169,10 +184,12 @@ class OrganizationService:
                 metadata={"invited_by": invitation.inviter_id},
             )
         )
+        self._invalidate_entitlements(organization, stored_membership.user_id)
         self.seat_publisher.enqueue(invitation.organization_id)
         return stored_membership
 
     def remove_member(self, organization_id: str, actor_id: str, target_user_id: str) -> OrganizationMembership:
+        organization = self.repository.get_organization(organization_id)
         actor_membership = self._require_active_membership(organization_id, actor_id)
         target_membership = self._require_membership(organization_id, target_user_id)
 
@@ -199,6 +216,7 @@ class OrganizationService:
                 timestamp=now,
             )
         )
+        self._invalidate_entitlements(organization, target_user_id)
         self.seat_publisher.enqueue(organization_id)
         return stored_membership
 
@@ -209,6 +227,7 @@ class OrganizationService:
         target_user_id: str,
         new_role: MembershipRole,
     ) -> OrganizationMembership:
+        organization = self.repository.get_organization(organization_id)
         actor_membership = self._require_active_membership(organization_id, actor_id)
         target_membership = self._require_membership(organization_id, target_user_id)
 
@@ -233,6 +252,7 @@ class OrganizationService:
                 timestamp=now,
             )
         )
+        self._invalidate_entitlements(organization, target_user_id)
         return stored_membership
 
     def _require_active_membership(self, organization_id: str, user_id: str) -> OrganizationMembership:
@@ -246,3 +266,10 @@ class OrganizationService:
         if membership is None:
             raise LookupError("Membership not found")
         return membership
+
+    def _invalidate_entitlements(self, organization: Organization, user_id: Optional[str]) -> None:
+        self.entitlement_invalidator.invalidate_organization(organization.id)
+        if organization.subscription_id:
+            self.entitlement_invalidator.invalidate_subscription(organization.subscription_id)
+        if user_id:
+            self.entitlement_invalidator.invalidate_user(user_id)

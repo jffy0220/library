@@ -20,6 +20,7 @@ from backend.app.organizations.models import (
 )
 from backend.app.organizations.service import (
     AuditLogger,
+    EntitlementInvalidator,
     InvitationTokenGenerator,
     OrganizationRepository,
     OrganizationService,
@@ -89,26 +90,48 @@ class StaticTokenGenerator(InvitationTokenGenerator):
         self.counter += 1
         return f"token-{self.counter}"
 
+class RecordingEntitlementInvalidator(EntitlementInvalidator):
+    def __init__(self) -> None:
+        self.user_ids: List[str] = []
+        self.organization_ids: List[str] = []
+        self.subscription_ids: List[str] = []
+
+    def invalidate_user(self, user_id: str) -> None:
+        self.user_ids.append(user_id)
+
+    def invalidate_organization(self, organization_id: str) -> None:
+        self.organization_ids.append(organization_id)
+
+    def invalidate_subscription(self, subscription_id: str) -> None:
+        self.subscription_ids.append(subscription_id)
 
 def _fixed_clock() -> datetime:
     return datetime(2024, 1, 1, tzinfo=timezone.utc)
 
 
 @pytest.fixture()
-def service_components() -> Tuple[OrganizationService, InMemoryOrganizationRepository, InMemoryAuditLogger, RecordingSeatPublisher]:
+def service_components() -> Tuple[
+    OrganizationService,
+    InMemoryOrganizationRepository,
+    InMemoryAuditLogger,
+    RecordingSeatPublisher,
+    RecordingEntitlementInvalidator,
+]:
     repository = InMemoryOrganizationRepository()
     audit_logger = InMemoryAuditLogger()
     seat_publisher = RecordingSeatPublisher()
     token_generator = StaticTokenGenerator()
+    entitlement_invalidator = RecordingEntitlementInvalidator()
     service = OrganizationService(
         repository=repository,
         audit_logger=audit_logger,
         seat_publisher=seat_publisher,
         token_generator=token_generator,
+        entitlement_invalidator=entitlement_invalidator,
         clock=_fixed_clock,
         invitation_ttl=timedelta(days=7),
     )
-    return service, repository, audit_logger, seat_publisher
+    return service, repository, audit_logger, seat_publisher, entitlement_invalidator
 
 
 def _seed_organization(repository: InMemoryOrganizationRepository) -> Organization:
@@ -135,8 +158,16 @@ def _seed_organization(repository: InMemoryOrganizationRepository) -> Organizati
     return organization
 
 
-def test_admin_cannot_invite_owner_role(service_components: Tuple[OrganizationService, InMemoryOrganizationRepository, InMemoryAuditLogger, RecordingSeatPublisher]):
-    service, repository, audit_logger, _ = service_components
+def test_admin_cannot_invite_owner_role(
+    service_components: Tuple[
+        OrganizationService,
+        InMemoryOrganizationRepository,
+        InMemoryAuditLogger,
+        RecordingSeatPublisher,
+        RecordingEntitlementInvalidator,
+    ]
+):
+    service, repository, audit_logger, _, _ = service_components
     organization = _seed_organization(repository)
     repository.save_membership(
         OrganizationMembership(
@@ -160,8 +191,16 @@ def test_admin_cannot_invite_owner_role(service_components: Tuple[OrganizationSe
     assert [event.action for event in audit_logger.events] == []
 
 
-def test_accept_invitation_consumes_seat_and_logs(service_components: Tuple[OrganizationService, InMemoryOrganizationRepository, InMemoryAuditLogger, RecordingSeatPublisher]):
-    service, repository, audit_logger, seat_publisher = service_components
+def test_accept_invitation_consumes_seat_and_logs(
+    service_components: Tuple[
+        OrganizationService,
+        InMemoryOrganizationRepository,
+        InMemoryAuditLogger,
+        RecordingSeatPublisher,
+        RecordingEntitlementInvalidator,
+    ]
+):
+    service, repository, audit_logger, seat_publisher, entitlement_invalidator = service_components
     organization = _seed_organization(repository)
     invitation = service.invite_member(
         organization_id=organization.id,
@@ -176,14 +215,25 @@ def test_accept_invitation_consumes_seat_and_logs(service_components: Tuple[Orga
     assert membership.organization_id == organization.id
     assert repository.get_membership(organization.id, "user-123").consumes_seat is True
     assert seat_publisher.enqueued == [organization.id]
+    assert entitlement_invalidator.user_ids == ["user-123"]
+    assert entitlement_invalidator.organization_ids == [organization.id]
+    assert entitlement_invalidator.subscription_ids == [organization.subscription_id]
     assert [event.action for event in audit_logger.events] == [
         MembershipAuditAction.INVITED,
         MembershipAuditAction.ACCEPTED,
     ]
 
 
-def test_remove_member_revokes_and_triggers_reconciliation(service_components: Tuple[OrganizationService, InMemoryOrganizationRepository, InMemoryAuditLogger, RecordingSeatPublisher]):
-    service, repository, audit_logger, seat_publisher = service_components
+def test_remove_member_revokes_and_triggers_reconciliation(
+    service_components: Tuple[
+        OrganizationService,
+        InMemoryOrganizationRepository,
+        InMemoryAuditLogger,
+        RecordingSeatPublisher,
+        RecordingEntitlementInvalidator,
+    ]
+):
+    service, repository, audit_logger, seat_publisher, entitlement_invalidator = service_components
     organization = _seed_organization(repository)
     repository.save_membership(
         OrganizationMembership(
@@ -202,10 +252,21 @@ def test_remove_member_revokes_and_triggers_reconciliation(service_components: T
     assert repository.get_membership(organization.id, "member-1").status == MembershipStatus.REVOKED
     assert seat_publisher.enqueued[-1] == organization.id
     assert audit_logger.events[-1].action == MembershipAuditAction.REMOVED
+    assert entitlement_invalidator.user_ids[-1] == "member-1"
+    assert entitlement_invalidator.organization_ids[-1] == organization.id
+    assert entitlement_invalidator.subscription_ids[-1] == organization.subscription_id
 
 
-def test_role_change_requires_owner_for_promotion(service_components: Tuple[OrganizationService, InMemoryOrganizationRepository, InMemoryAuditLogger, RecordingSeatPublisher]):
-    service, repository, _, _ = service_components
+def test_role_change_requires_owner_for_promotion(
+    service_components: Tuple[
+        OrganizationService,
+        InMemoryOrganizationRepository,
+        InMemoryAuditLogger,
+        RecordingSeatPublisher,
+        RecordingEntitlementInvalidator,
+    ]
+):
+    service, repository, _, _, entitlement_invalidator = service_components
     organization = _seed_organization(repository)
     repository.save_membership(
         OrganizationMembership(
@@ -250,3 +311,6 @@ def test_role_change_requires_owner_for_promotion(service_components: Tuple[Orga
     )
 
     assert owner_updated.role == MembershipRole.MEMBER
+    assert entitlement_invalidator.user_ids[-1] == "admin-1"
+    assert entitlement_invalidator.organization_ids[-1] == organization.id
+    assert entitlement_invalidator.subscription_ids[-1] == organization.subscription_id
