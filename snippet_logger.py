@@ -9,6 +9,7 @@ DB_CFG = {
     "dbname": os.getenv("DB_NAME", "snippets_db"),
     "user": os.getenv("DB_USER", "snip_user"),
     "password": os.getenv("DB_PASSWORD", "snip_pass"),
+    "connect_timeout": float(os.getenv("DB_CONNECT_TIMEOUT", "5")),
 }
 
 HELP = """

@@ -106,6 +106,7 @@ DB_CFG = dict(
     dbname=os.getenv("DB_NAME", "snippets_db"),
     user=os.getenv("DB_USER", "snip_user"),
     password=os.getenv("DB_PASSWORD", "snip_pass"),
+    connect_timeout=float(os.getenv("DB_CONNECT_TIMEOUT", "5")),
 )
 
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "dev-secret-change-me")

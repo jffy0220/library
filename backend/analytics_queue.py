@@ -10,6 +10,13 @@ import asyncpg
 
 from .analytics_config import ANALYTICS_ENABLED, APP_VERSION, DB_CONFIG
 
+from .analytics_config import (
+    ANALYTICS_ENABLED,
+    APP_VERSION,
+    DB_CONFIG,
+    DB_CONNECT_TIMEOUT,
+)
+
 
 LOGGER = logging.getLogger("analytics.queue")
 
@@ -56,6 +63,13 @@ def _with_app_version(event: Dict[str, Any]) -> Dict[str, Any]:
 async def create_analytics_pool() -> Optional[asyncpg.Pool]:
     if not ANALYTICS_ENABLED:
         return None
+    return await asyncpg.create_pool(
+        min_size=1,
+        max_size=5,
+        command_timeout=10,
+        timeout=DB_CONNECT_TIMEOUT,
+        **DB_CONFIG,
+    )
     return await asyncpg.create_pool(min_size=1, max_size=5, command_timeout=10, **DB_CONFIG)
 
 

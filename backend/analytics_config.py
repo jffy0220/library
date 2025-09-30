@@ -13,6 +13,7 @@ def _env_bool(value: str) -> bool:
 ANALYTICS_ENABLED = _env_bool(os.getenv("ANALYTICS_ENABLED", "false"))
 ANALYTICS_IP_SALT = os.getenv("ANALYTICS_IP_SALT", "")
 APP_VERSION = os.getenv("APP_VERSION")
+DB_CONNECT_TIMEOUT = float(os.getenv("DB_CONNECT_TIMEOUT", "5"))
 
 DB_CONFIG: Dict[str, Any] = {
     "host": os.getenv("DB_HOST", "127.0.0.1"),
