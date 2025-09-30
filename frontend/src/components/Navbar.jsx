@@ -3,7 +3,6 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth'
 import { useNotifications } from '../hooks/useNotifications'
 import { useNotificationPreferences } from '../hooks/useNotificationPreferences'
-import { useAddSnippet } from './AddSnippetProvider'
 import InstantSearch from './InstantSearch'
 
 const NOTIFICATION_PREF_KEYS = {
@@ -32,7 +31,6 @@ export default function Navbar() {
   const [showToast, setShowToast] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const { preferences } = useNotificationPreferences()
-  const { open: openAddSnippet } = useAddSnippet()
 
   const isToastEnabled = useCallback(
     (notification) => {
@@ -148,15 +146,13 @@ export default function Navbar() {
                   >
                     Messages
                   </Link>
-                  <button
-                    type="button"
+                  <Link
                     className="btn btn-sm btn-primary"
-                    onClick={openAddSnippet}
-                    title="Share a snippet (Cmd/Ctrl + K)"
-                    aria-keyshortcuts="Control+K Meta+K"
+                    to="/new"
+                    title="Create a full snippet with all details"
                   >
-                    Share snippet
-                  </button>
+                    New snippet
+                  </Link>
                   <Link className="btn btn-sm btn-outline-light" to="/settings/notifications">
                     Settings
                   </Link>

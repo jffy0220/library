@@ -391,6 +391,7 @@ def _build_server_event(
 class SnippetBase(BaseModel):
     date_read: Optional[date] = None
     book_name: Optional[str] = None
+    book_author: Optional[str] = None
     page_number: Optional[int] = None
     chapter: Optional[str] = None
     verse: Optional[str] = None
@@ -418,6 +419,7 @@ class SnippetCreate(SnippetBase):
 class SnippetUpdate(BaseModel):
     date_read: Optional[date] = None
     book_name: Optional[str] = None
+    book_author: Optional[str] = None
     page_number: Optional[int] = None
     chapter: Optional[str] = None
     verse: Optional[str] = None
@@ -955,7 +957,7 @@ def fetch_snippet(snippet_id: int) -> Optional[SnippetOut]:
         with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
             cur.execute(
                 """
-                SELECT s.id, s.created_utc, s.date_read, s.book_name, s.page_number, s.chapter, s.verse,
+                SELECT s.id, s.created_utc, s.date_read, s.book_name, s.book_author, s.page_number, s.chapter, s.verse,
                        s.text_snippet, s.thoughts, s.created_by_user_id, s.group_id, s.visibility,
                        u.username AS created_by_username
                 FROM snippets s
@@ -1414,6 +1416,7 @@ def list_snippets(
                 "s.created_utc",
                 "s.date_read",
                 "s.book_name",
+                "s.book_author",
                 "s.page_number",
                 "s.chapter",
                 "s.verse",
@@ -1566,6 +1569,7 @@ def search_snippets(
         "s.created_utc",
         "s.date_read",
         "s.book_name",
+        "s.book_author",
         "s.page_number",
         "s.chapter",
         "s.verse",
@@ -1697,6 +1701,7 @@ def search_snippets(
             "created_utc": row["created_utc"],
             "date_read": row["date_read"],
             "book_name": row["book_name"],
+            "book_author": row.get("book_author"),
             "page_number": row["page_number"],
             "chapter": row["chapter"],
             "verse": row["verse"],
@@ -1783,7 +1788,7 @@ def list_trending_snippets(limit: int = Query(6, ge=1, le=50)):
         with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
             cur.execute(
                 """
-                SELECT s.id, s.created_utc, s.date_read, s.book_name, s.page_number, s.chapter, s.verse,
+                SELECT s.id, s.created_utc, s.date_read, s.book_name, s.book_author, s.page_number, s.chapter, s.verse,
                        s.text_snippet, s.thoughts, s.created_by_user_id, s.group_id, s.visibility,
                        u.username AS created_by_username,
                        COALESCE(tsa.recent_comment_count, 0) AS recent_comment_count,
@@ -2012,13 +2017,14 @@ def create_snippet(
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO snippets (date_read, book_name, page_number, chapter, verse, text_snippet, thoughts, group_id, visibility, created_by_user_id)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO snippets (date_read, book_name, book_author, page_number, chapter, verse, text_snippet, thoughts, group_id, visibility, created_by_user_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
                 (
                     payload.date_read,
                     payload.book_name,
+                    payload.book_author,
                     payload.page_number,
                     payload.chapter,
                     payload.verse,
@@ -2115,6 +2121,8 @@ def update_snippet(
         changed_fields.append("date_read")
     if (snippet.book_name or "").strip() != (updated.book_name or "").strip():
         changed_fields.append("book_name")
+    if (snippet.book_author or "").strip() != (updated.book_author or "").strip():
+        changed_fields.append("book_author")
     if (snippet.page_number or None) != (updated.page_number or None):
         changed_fields.append("page_number")
     if (snippet.chapter or "").strip() != (updated.chapter or "").strip():

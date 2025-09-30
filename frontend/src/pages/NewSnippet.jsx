@@ -12,6 +12,7 @@ export default function NewSnippet() {
   const [form, setForm] = useState({
     date_read: '',
     book_name: '',
+    book_author: '',
     page_number: '',
     chapter: '',
     verse: '',
@@ -56,6 +57,7 @@ export default function NewSnippet() {
     const payload = {
       date_read: form.date_read || null,
       book_name: form.book_name || null,
+      book_author: form.book_author || null,
       page_number: form.page_number === '' ? null : Number(form.page_number),
       chapter: form.chapter || null,
       verse: form.verse || null,
@@ -101,6 +103,11 @@ export default function NewSnippet() {
           <div className="col-md-8">
             <label className="form-label">Book name</label>
             <input name="book_name" className="form-control" value={form.book_name} onChange={onChange} />
+          </div>
+          <div className="col-md-6">
+            <label className="form-label">Author</label>
+            <input name="book_author" className="form-control" value={form.book_author} onChange={onChange} />
+            <div className="form-text">Capture who wrote the work you are quoting.</div>
           </div>
           <div className="col-md-6">
             <label className="form-label">User</label>

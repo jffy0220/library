@@ -22,6 +22,7 @@ import { capture } from '../lib/analytics'
 const makeEmptySnippetForm = () => ({
   date_read: '',
   book_name: '',
+  book_author: '',
   page_number: '',
   chapter: '',
   verse: '',
@@ -236,6 +237,7 @@ export default function ViewSnippet() {
     setSnippetForm({
       date_read: row.date_read || '',
       book_name: row.book_name || '',
+      book_author: row.book_author || '',
       page_number: row.page_number != null ? String(row.page_number) : '',
       chapter: row.chapter || '',
       verse: row.verse || '',
@@ -287,6 +289,7 @@ export default function ViewSnippet() {
     const payload = {
       date_read: snippetForm.date_read || null,
       book_name: snippetForm.book_name || null,
+      book_author: snippetForm.book_author || null,
       page_number: pageNumber,
       chapter: snippetForm.chapter || null,
       verse: snippetForm.verse || null,
@@ -312,6 +315,7 @@ export default function ViewSnippet() {
         const changedFields = new Set()
         if ((previous?.date_read || null) !== (updated.date_read || null)) changedFields.add('date_read')
         if ((previous?.book_name || '').trim() !== (updated.book_name || '').trim()) changedFields.add('book_name')
+        if ((previous?.book_author || '').trim() !== (updated.book_author || '').trim()) changedFields.add('book_author')
         if ((previous?.page_number || null) !== (updated.page_number || null)) changedFields.add('page_number')
         if ((previous?.chapter || '').trim() !== (updated.chapter || '').trim()) changedFields.add('chapter')
         if ((previous?.verse || '').trim() !== (updated.verse || '').trim()) changedFields.add('verse')
@@ -670,7 +674,16 @@ export default function ViewSnippet() {
                 />
               </div>
               <div className="col-md-6">
-                <label className="form-label">Author</label>
+                <label className="form-label">Book author</label>
+                <input
+                  name="book_author"
+                  className="form-control"
+                  value={snippetForm.book_author}
+                  onChange={handleSnippetFormChange}
+                />
+              </div>
+              <div className="col-md-6">
+                <label className="form-label">Shared by</label>
                 <input className="form-control" value={row.created_by_username || ''} readOnly />
               </div>
               <div className="col-md-6">

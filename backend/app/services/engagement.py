@@ -8,6 +8,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import psycopg2.extras
+from psycopg2 import errors
 from psycopg2.extensions import connection as PgConnection
 
 try:
@@ -98,10 +99,13 @@ def resolve_timezone(conn: PgConnection, user_id: int, fallback: Optional[str] =
     """Return the stored timezone or a normalized fallback if none exists."""
 
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute(
-            "SELECT timezone FROM user_profiles WHERE user_id = %s",
-            (user_id,),
-        )
+        try:
+            cur.execute(
+                "SELECT timezone FROM user_profiles WHERE user_id = %s",
+                (user_id,),
+            )
+        except errors.UndefinedTable:
+            return _normalize_timezone(fallback)
         row = cur.fetchone()
     if row and row.get("timezone"):
         return _normalize_timezone(row["timezone"])

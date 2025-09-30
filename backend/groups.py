@@ -671,7 +671,7 @@ def list_group_snippets(
 
             cur.execute(
                 """
-                SELECT s.id, s.created_utc, s.date_read, s.book_name, s.page_number, s.chapter, s.verse,
+                SELECT s.id, s.created_utc, s.date_read, s.book_name, s.book_author, s.page_number, s.chapter, s.verse,
                        s.text_snippet, s.thoughts, s.created_by_user_id, s.group_id, s.visibility,
                        u.username AS created_by_username
                 FROM snippets s

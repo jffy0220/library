@@ -20,8 +20,10 @@ function createInitialFormState() {
   return {
     text: '',
     book: '',
+    author: '',
     page: '',
     chapter: '',
+    verse: '',
     tags: [],
     thoughts: '',
   }
@@ -77,8 +79,10 @@ export function AddSnippetProvider({ children }) {
   const titleId = useId()
   const textId = useId()
   const bookId = useId()
+  const authorId = useId()
   const pageId = useId()
   const chapterId = useId()
+  const verseId = useId()
   const thoughtsId = useId()
   const tagsInputId = useId()
   const bookListId = `${bookId}-options`
@@ -371,7 +375,9 @@ export function AddSnippetProvider({ children }) {
       return
     }
     const trimmedBook = form.book.trim()
+    const trimmedAuthor = form.author.trim()
     const trimmedChapter = form.chapter.trim()
+    const trimmedVerse = form.verse.trim()
     const trimmedThoughts = form.thoughts.trim()
     const pageInput = form.page.trim()
     let pageNumber = null
@@ -389,8 +395,10 @@ export function AddSnippetProvider({ children }) {
       const payload = {
         text_snippet: trimmedText,
         book_name: trimmedBook || null,
+        book_author: trimmedAuthor || null,
         page_number: pageNumber,
         chapter: trimmedChapter || null,
+        verse: trimmedVerse || null,
         tags: form.tags,
         thoughts: trimmedThoughts || null,
       }
@@ -546,6 +554,22 @@ export function AddSnippetProvider({ children }) {
                 ) : null}
               </div>
 
+              <div>
+                <label className="form-label" htmlFor={authorId}>
+                  Author
+                </label>
+                <input
+                  id={authorId}
+                  className="form-control"
+                  type="text"
+                  value={form.author}
+                  onChange={handleFieldChange('author')}
+                  placeholder="Who wrote this work?"
+                  disabled={submitting}
+                  autoComplete="off"
+                />
+              </div>
+
               <div className="row g-3">
                 <div className="col-sm-4">
                   <label className="form-label" htmlFor={pageId}>
@@ -577,6 +601,21 @@ export function AddSnippetProvider({ children }) {
                     disabled={submitting}
                   />
                 </div>
+                <div className="col-sm-4">
+                  <label className="form-label" htmlFor={verseId}>
+                    Verse
+                  </label>
+                  <input
+                    id={verseId}
+                    className="form-control"
+                    type="text"
+                    value={form.verse}
+                    onChange={handleFieldChange('verse')}
+                    placeholder="Optional"
+                    disabled={submitting}
+                  />
+                </div>
+                </div>
                 <div>
                 <label className="form-label" htmlFor={tagsInputId}>
                   Tags
@@ -603,7 +642,6 @@ export function AddSnippetProvider({ children }) {
                     Retry loading suggestions
                   </button>
                 ) : null}
-                </div>
               </div>
 
               <div>

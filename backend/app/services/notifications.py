@@ -80,6 +80,7 @@ def _compose_comment_context(
                 c.snippet_id,
                 u.username AS actor_username,
                 s.book_name,
+                s.book_author,
                 s.text_snippet,
                 s.thoughts
             FROM comments c
