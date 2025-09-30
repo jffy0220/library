@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import hashlib
 import logging
 import os
 import re
@@ -11,7 +12,7 @@ from collections import defaultdict
 from datetime import datetime, date, timedelta
 from pathlib import Path
 from threading import Lock
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Sequence, Set, Tuple
 
 from fastapi import (
     BackgroundTasks,
@@ -145,9 +146,13 @@ _refresh_metrics: Dict[str, Any] = {
     "warning_threshold_seconds": TRENDING_REFRESH_WARN_SECONDS,
 }
 
-_auth_tokens_lock = Lock()
-_onboarding_tokens: Dict[int, Dict[str, Any]] = {}
-_password_reset_tokens: Dict[int, Dict[str, Any]] = {}
+TOKEN_TYPE_ONBOARDING = "onboarding"
+TOKEN_TYPE_PASSWORD_RESET = "password_reset"
+
+
+class TokenValidationResult(NamedTuple):
+    email: Optional[str]
+    expires_at: datetime
 
 def get_email_provider() -> EmailProvider:
     return _email_provider
@@ -223,43 +228,128 @@ def get_trending_refresh_metrics() -> Dict[str, Any]:
     with _refresh_metrics_lock:
         return dict(_refresh_metrics)
 
-def _prune_token_store(store: Dict[int, Dict[str, Any]], now: Optional[datetime] = None) -> None:
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _delete_expired_tokens(cursor: Any, *, now: datetime) -> int:
+    cursor.execute(
+        "DELETE FROM user_tokens WHERE expires_at <= %s",
+        (now,),
+    )
+    return cursor.rowcount
+
+
+def prune_expired_user_tokens(now: Optional[datetime] = None) -> int:
     current_time = now or datetime.utcnow()
-    expired_keys = [
-        key
-        for key, record in store.items()
-        if record.get("expires_at") and record["expires_at"] <= current_time
-    ]
-    for key in expired_keys:
-        store.pop(key, None)
+    with contextlib.closing(get_conn()) as conn:
+        with conn:
+            with conn.cursor() as cur:
+                return _delete_expired_tokens(cur, now=current_time)
 
 
-def _issue_token(
-    store: Dict[int, Dict[str, Any]],
+def _issue_user_token(
     user_id: int,
     email: Optional[str],
     ttl: timedelta,
+    token_type: str,
 ) -> Tuple[str, datetime]:
+    issued_at = datetime.utcnow()
+    expires_at = issued_at + ttl
     token = secrets.token_urlsafe(AUTH_TOKEN_BYTES)
-    expires_at = datetime.utcnow() + ttl
-    store[user_id] = {
-        "token": token,
-        "email": email,
-        "expires_at": expires_at,
-    }
+    token_hash = _hash_token(token)
+
+    with contextlib.closing(get_conn()) as conn:
+        with conn:
+            with conn.cursor() as cur:
+                _delete_expired_tokens(cur, now=issued_at)
+                cur.execute(
+                    "DELETE FROM user_tokens WHERE user_id = %s AND token_type = %s",
+                    (user_id, token_type),
+                )
+                cur.execute(
+                    (
+                        "INSERT INTO user_tokens (user_id, token_type, token_hash, email, expires_at) "
+                        "VALUES (%s, %s, %s, %s, %s)"
+                    ),
+                    (user_id, token_type, token_hash, email, expires_at),
+                )
+
     return token, expires_at
 
 
 def issue_onboarding_token(user_id: int, email: str) -> Tuple[str, datetime]:
-    with _auth_tokens_lock:
-        _prune_token_store(_onboarding_tokens)
-        return _issue_token(_onboarding_tokens, user_id, email, ONBOARDING_TOKEN_TTL)
+    return _issue_user_token(user_id, email, ONBOARDING_TOKEN_TTL, TOKEN_TYPE_ONBOARDING)
 
 
 def issue_password_reset_token(user_id: int, email: Optional[str]) -> Tuple[str, datetime]:
-    with _auth_tokens_lock:
-        _prune_token_store(_password_reset_tokens)
-        return _issue_token(_password_reset_tokens, user_id, email, PASSWORD_RESET_TOKEN_TTL)
+    return _issue_user_token(user_id, email, PASSWORD_RESET_TOKEN_TTL, TOKEN_TYPE_PASSWORD_RESET)
+
+
+def _validate_user_token(
+    user_id: int,
+    token: str,
+    token_type: str,
+    *,
+    consume: bool = False,
+) -> Optional[TokenValidationResult]:
+    token_hash = _hash_token(token)
+    now = datetime.utcnow()
+
+    with contextlib.closing(get_conn()) as conn:
+        with conn:
+            with conn.cursor() as cur:
+                _delete_expired_tokens(cur, now=now)
+                cur.execute(
+                    (
+                        "SELECT email, expires_at, token_hash "
+                        "FROM user_tokens WHERE user_id = %s AND token_type = %s"
+                    ),
+                    (user_id, token_type),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return None
+                email, expires_at, stored_hash = row
+                if stored_hash != token_hash:
+                    return None
+                if expires_at <= now:
+                    cur.execute(
+                        "DELETE FROM user_tokens WHERE user_id = %s AND token_type = %s",
+                        (user_id, token_type),
+                    )
+                    return None
+                if consume:
+                    cur.execute(
+                        (
+                            "DELETE FROM user_tokens "
+                            "WHERE user_id = %s AND token_type = %s AND token_hash = %s"
+                        ),
+                        (user_id, token_type, token_hash),
+                    )
+                return TokenValidationResult(email=email, expires_at=expires_at)
+
+
+def validate_onboarding_token(
+    user_id: int, token: str, *, consume: bool = False
+) -> Optional[TokenValidationResult]:
+    return _validate_user_token(
+        user_id,
+        token,
+        TOKEN_TYPE_ONBOARDING,
+        consume=consume,
+    )
+
+
+def validate_password_reset_token(
+    user_id: int, token: str, *, consume: bool = False
+) -> Optional[TokenValidationResult]:
+    return _validate_user_token(
+        user_id,
+        token,
+        TOKEN_TYPE_PASSWORD_RESET,
+        consume=consume,
+    )
 
 
 def send_onboarding_email(email: str, username: str, token: str, expires_at: datetime) -> None:

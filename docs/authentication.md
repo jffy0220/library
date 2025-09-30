@@ -16,9 +16,10 @@ workflows that complement the existing session-based authentication.
   * `expires_at` indicates when the onboarding token will expire.
 * **Side effects:**
   * Inserts the new user into the `users` table with a hashed password.
-  * Generates an onboarding token, stores it in-memory, and queues a background
-    task that logs the simulated onboarding email with token and expiry. The
-    email sender defaults to `noreply@example.com` and is configurable.
+    * Generates an onboarding token, persists a hashed copy in the
+    `user_tokens` table (type `onboarding`), and queues a background task that
+    logs the simulated onboarding email with token and expiry. The email sender
+    defaults to `noreply@example.com` and is configurable.
   * Enforces uniqueness on both username and email (case-insensitive for email).
 
 If a duplicate username or email is submitted, the endpoint returns a `400`
@@ -37,13 +38,15 @@ returned with a `422` status.
     avoid disclosing account existence.
 * **Side effects:**
   * When a matching user with an email is found, the service generates a
-    password reset token, stores it in-memory with an expiry, and logs a
-    simulated email containing the reset instructions.
+    password reset token, persists a hashed copy in the `user_tokens` table
+    (type `password_reset`) with an expiry, and logs a simulated email
+    containing the reset instructions.
   * If a user is found without an email on file, a warning is logged.
 
-Tokens are retained in-memory only for the duration of their configured TTLs.
-They are intended for verification/testing and are logged; there is no
-verification endpoint yet.
+Tokens are retained in the database until they expire (or are consumed),
+allowing verification even after an application restart. Only SHA-256 hashes of
+the tokens are stored; the plaintext value is sent via email and returned to the
+caller when issued.
 
 ## Environment configuration
 
