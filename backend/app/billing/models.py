@@ -1,6 +1,3 @@
-+198
--0
-
 """Domain models for the billing system."""
 from __future__ import annotations
 
@@ -105,6 +102,7 @@ class Subscription(BaseModel):
 
     @property
     def is_past_due(self) -> bool:
+        """Return ``True`` when the subscription is in a past-due state."""
         return self.status == SubscriptionStatus.PAST_DUE
 
 

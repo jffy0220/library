@@ -1,6 +1,3 @@
-+93
--0
-
 """Storage quota evaluation utilities for feature gating."""
 from __future__ import annotations
 
