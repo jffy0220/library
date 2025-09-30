@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import hashlib
 import logging
+import math
 import os
 import re
 import sys
@@ -100,13 +101,22 @@ except ModuleNotFoundError as exc:
 
 load_dotenv()
 
+def _parse_connect_timeout(raw_value: str) -> int:
+    try:
+        timeout = float(raw_value)
+    except ValueError as exc:
+        raise ValueError("DB_CONNECT_TIMEOUT must be a number") from exc
+    if timeout < 0:
+        raise ValueError("DB_CONNECT_TIMEOUT must be non-negative")
+    return int(math.ceil(timeout))
+
 DB_CFG = dict(
     host=os.getenv("DB_HOST", "127.0.0.1"),
     port=int(os.getenv("DB_PORT", "5432")),
     dbname=os.getenv("DB_NAME", "snippets_db"),
     user=os.getenv("DB_USER", "snip_user"),
     password=os.getenv("DB_PASSWORD", "snip_pass"),
-    connect_timeout=float(os.getenv("DB_CONNECT_TIMEOUT", "5")),
+    connect_timeout=_parse_connect_timeout(os.getenv("DB_CONNECT_TIMEOUT", "5")),
 )
 
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "dev-secret-change-me")
