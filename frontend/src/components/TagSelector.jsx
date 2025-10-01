@@ -38,13 +38,19 @@ export default function TagSelector({
     }
   }
 
-  const handleSubmit = (event) => {
-    event.preventDefault()
+  const addDraftTag = () => {
     const normalized = normalizeTagName(draft)
     if (!normalized) return
     setDraft('')
     if (!selectedLookup.has(normalized.toLowerCase())) {
       emitChange([...normalizedSelected, normalized])
+    }
+  }
+
+  const handleKeyDown = (event) => {
+    if (event.key === 'Enter' || event.key === 'Tab') {
+      event.preventDefault()
+      addDraftTag()
     }
   }
 
@@ -55,20 +61,21 @@ export default function TagSelector({
   return (
     <div className="tag-selector">
       {allowCustom && (
-        <form onSubmit={handleSubmit} className="tag-selector__form">
+        <div className="tag-selector__form">
           <span aria-hidden="true">#</span>
           <input
             type="text"
             className="tag-selector__input"
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={handleKeyDown}
             placeholder={placeholder}
             aria-label="Add tag"
           />
-          <button type="submit" className="tag-selector__submit">
+          <button type="button" className="tag-selector__submit" onClick={addDraftTag}>
             Add
           </button>
-        </form>
+        </div>
       )}
 
       {normalizedSelected.length > 0 ? (
