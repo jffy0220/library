@@ -105,6 +105,7 @@ def resolve_timezone(conn: PgConnection, user_id: int, fallback: Optional[str] =
                 (user_id,),
             )
         except errors.UndefinedTable:
+            conn.rollback()
             return _normalize_timezone(fallback)
         row = cur.fetchone()
     if row and row.get("timezone"):
