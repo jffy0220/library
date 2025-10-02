@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react'
+import React, { useEffect, useMemo, useState, useId } from 'react'
 import { createSnippet, listTags } from '../api'
 import { capture } from '../lib/analytics'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth'
 import TagSelector from '../components/TagSelector'
 import GroupSelector from '../components/GroupSelector'
+import useBookSuggestions from '../hooks/useBookSuggestions'
 
 export default function NewSnippet() {
   const nav = useNavigate()
@@ -26,10 +27,55 @@ export default function NewSnippet() {
   const [availableTags, setAvailableTags] = useState([])
   const [loadingTags, setLoadingTags] = useState(true)
   const [groupId, setGroupId] = useState(null)
+  const bookInputId = useId()
+  const bookListId = `${bookInputId}-options`
+
+  const {
+    options: fetchedBookOptions,
+    loading: loadingBookSuggestions,
+    error: bookSuggestionsError,
+    retry: retryBookSuggestions
+  } = useBookSuggestions(form.book_name)
+
+  const bookOptions = useMemo(() => {
+    const trimmed = (form.book_name || '').trim()
+    if (!trimmed) return fetchedBookOptions
+    const normalized = trimmed.toLowerCase()
+    const exists = fetchedBookOptions.some((option) => option.value.toLowerCase() === normalized)
+    if (exists) {
+      return fetchedBookOptions
+    }
+    return [
+      ...fetchedBookOptions,
+      { value: trimmed, label: trimmed, author: null, source: 'input', isbn: null, googleVolumeId: null }
+    ]
+  }, [fetchedBookOptions, form.book_name])
+
+  const bookOptionLookup = useMemo(() => {
+    const map = new Map()
+    bookOptions.forEach((option) => {
+      const key = option.value.toLowerCase()
+      if (!map.has(key)) {
+        map.set(key, option)
+      }
+    })
+    return map
+  }, [bookOptions])
 
   const onChange = (e) => {
     const { name, value } = e.target
-    setForm((f) => ({ ...f, [name]: value }))
+    const normalized = value.trim().toLowerCase()
+    setForm((f) => {
+      const next = { ...f, [name]: value }
+      if (name === 'book_name') {
+        const suggestion = bookOptionLookup.get(normalized)
+        const hasAuthor = (f.book_author || '').trim().length > 0
+        if (suggestion?.author && !hasAuthor) {
+          next.book_author = suggestion.author
+        }
+      }
+      return next
+    })
     if (name === 'visibility' && value === 'private') {
       setGroupId(null)
     }
@@ -96,23 +142,48 @@ export default function NewSnippet() {
       {msg && <div className="alert alert-danger">{msg}</div>}
       <form onSubmit={onSubmit} className="d-flex flex-column gap-4">
         <div className="row g-3">
-          <div className="col-md-4">
-            <label className="form-label">Date read (YYYY-MM-DD)</label>
-            <input name="date_read" className="form-control" value={form.date_read} onChange={onChange} />
-          </div>
-          <div className="col-md-8">
+          <div className="col-12">
             <label className="form-label">Book name</label>
-            <input name="book_name" className="form-control" value={form.book_name} onChange={onChange} />
+            <input
+              name="book_name"
+              className="form-control"
+              value={form.book_name}
+              onChange={onChange}
+              list={bookListId}
+              autoComplete="off"
+              placeholder="Search existing titles or add a new one"
+            />
+            <datalist id={bookListId}>
+              {bookOptions.map((option, index) => (
+                <option
+                  key={`${option.source}:${option.value.toLowerCase()}:${index}`}
+                  value={option.value}
+                  label={option.label !== option.value ? option.label : undefined}
+                />
+              ))}
+            </datalist>
+            <div className="form-text">
+              {loadingBookSuggestions
+                ? 'Searching books…'
+                : bookSuggestionsError || 'Start typing to search our catalog or Google Books.'}
+            </div>
+            {bookSuggestionsError ? (
+              <button type="button" className="btn btn-link btn-sm p-0 mt-1" onClick={retryBookSuggestions}>
+                Retry search
+              </button>
+            ) : null}
           </div>
           <div className="col-md-6">
             <label className="form-label">Author</label>
-            <input name="book_author" className="form-control" value={form.book_author} onChange={onChange} />
+            <input
+              name="book_author"
+              className="form-control"
+              value={form.book_author}
+              onChange={onChange}
+              autoComplete="off"
+              placeholder="Who wrote this work?"
+            />
             <div className="form-text">Capture who wrote the work you are quoting.</div>
-          </div>
-          <div className="col-md-6">
-            <label className="form-label">User</label>
-            <input className="form-control" value={user?.username || ''} readOnly />
-            <div className="form-text">Signed in user</div>
           </div>
           <div className="col-md-6">
             <label className="form-label">Visibility</label>

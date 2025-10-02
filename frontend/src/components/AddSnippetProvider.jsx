@@ -9,10 +9,11 @@ import React, {
   useState,
 } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { createSnippet, deleteSnippet, listBooks, listTags } from '../api'
+import { createSnippet, deleteSnippet, listTags } from '../api'
 import { capture } from '../lib/analytics'
 import { useAuth } from '../auth'
 import TagInput from './TagInput'
+import useBookSuggestions from '../hooks/useBookSuggestions'
 
 const AddSnippetContext = createContext(null)
 
@@ -45,18 +46,6 @@ function normalizeSuggestionList(items, getValue) {
   return list
 }
 
-function addSuggestionIfMissing(list, value) {
-  const normalized = (value || '').trim()
-  if (!normalized) return list
-  const key = normalized.toLowerCase()
-  if (list.some((item) => item.toLowerCase() === key)) {
-    return list
-  }
-  const next = [...list, normalized]
-  next.sort((a, b) => a.localeCompare(b))
-  return next
-}
-
 export function AddSnippetProvider({ children }) {
   const { user } = useAuth()
   const navigate = useNavigate()
@@ -64,11 +53,9 @@ export function AddSnippetProvider({ children }) {
   const [form, setForm] = useState(createInitialFormState)
   const [formError, setFormError] = useState(null)
   const [submitting, setSubmitting] = useState(false)
-  const [bookOptions, setBookOptions] = useState([])
   const [tagOptions, setTagOptions] = useState([])
-  const [loadingSuggestions, setLoadingSuggestions] = useState(false)
-  const [suggestionsLoaded, setSuggestionsLoaded] = useState(false)
-  const [bookSuggestionsError, setBookSuggestionsError] = useState(null)
+  const [loadingTagSuggestions, setLoadingTagSuggestions] = useState(false)
+  const [tagSuggestionsLoaded, setTagSuggestionsLoaded] = useState(false)
   const [tagSuggestionsError, setTagSuggestionsError] = useState(null)
   const [toast, setToast] = useState(null)
   const dialogRef = useRef(null)
@@ -86,6 +73,38 @@ export function AddSnippetProvider({ children }) {
   const thoughtsId = useId()
   const tagsInputId = useId()
   const bookListId = `${bookId}-options`
+
+  const {
+    options: fetchedBookOptions,
+    loading: loadingBookSuggestions,
+    error: bookSuggestionsError,
+    retry: retryBookSuggestions
+  } = useBookSuggestions(form.book)
+
+  const bookOptions = useMemo(() => {
+    const trimmed = (form.book || '').trim()
+    if (!trimmed) return fetchedBookOptions
+    const normalized = trimmed.toLowerCase()
+    const exists = fetchedBookOptions.some((option) => option.value.toLowerCase() === normalized)
+    if (exists) {
+      return fetchedBookOptions
+    }
+    return [
+      ...fetchedBookOptions,
+      { value: trimmed, label: trimmed, author: null, source: 'input', isbn: null, googleVolumeId: null }
+    ]
+  }, [fetchedBookOptions, form.book])
+
+  const bookOptionLookup = useMemo(() => {
+    const map = new Map()
+    bookOptions.forEach((option) => {
+      const key = option.value.toLowerCase()
+      if (!map.has(key)) {
+        map.set(key, option)
+      }
+    })
+    return map
+  }, [bookOptions])
 
   const resetForm = useCallback(() => {
     setForm(createInitialFormState())
@@ -276,43 +295,16 @@ export function AddSnippetProvider({ children }) {
 
   useEffect(() => {
     if (!isOpen) return undefined
-    if (suggestionsLoaded || loadingSuggestions) return undefined
+    if (tagSuggestionsLoaded || loadingTagSuggestions) return undefined
     let ignore = false
-    setLoadingSuggestions(true)
-    setBookSuggestionsError(null)
+    setLoadingTagSuggestions(true)
     setTagSuggestionsError(null)
     ;(async () => {
       try {
-        const [booksResult, tagsResult] = await Promise.allSettled([
-          listBooks({ limit: 200 }),
-          listTags({ limit: 200 }),
-        ])
+        const tags = await listTags({ limit: 200 })
         if (ignore) return
-        if (booksResult.status === 'fulfilled') {
-        setBookOptions((prev) => {
-          const fromApi = normalizeSuggestionList(booksResult.value, (item) => item?.name ?? item)
-          if (fromApi.length === 0) {
-            return prev
-          }
-          const seen = new Set(fromApi.map((name) => name.toLowerCase()))
-          prev.forEach((name) => {
-            const normalized = (name || '').trim()
-            if (!normalized) return
-            const key = normalized.toLowerCase()
-            if (seen.has(key)) return
-            seen.add(key)
-            fromApi.push(normalized)
-          })
-          fromApi.sort((a, b) => a.localeCompare(b))
-          return fromApi
-        })
-        setBookSuggestionsError(null)
-      } else {
-        setBookSuggestionsError('Unable to load book suggestions.')
-      }
-      if (tagsResult.status === 'fulfilled') {
         setTagOptions((prev) => {
-          const fromApi = normalizeSuggestionList(tagsResult.value, (item) => item?.name ?? item)
+          const fromApi = normalizeSuggestionList(tags, (item) => item?.name ?? item)
           if (fromApi.length === 0) {
             return prev
           }
@@ -329,39 +321,47 @@ export function AddSnippetProvider({ children }) {
           return fromApi
         })
         setTagSuggestionsError(null)
-      } else {
-        setTagSuggestionsError('Unable to load tag suggestions.')
-      }
+      } catch (err) {
+        if (!ignore) {
+          console.error('Failed to load tag suggestions', err)
+          setTagSuggestionsError('Unable to load tag suggestions.')
+        }
       } finally {
         if (!ignore) {
-          setSuggestionsLoaded(true)
-          setLoadingSuggestions(false)
+          setTagSuggestionsLoaded(true)
+          setLoadingTagSuggestions(false)
         }
       }
     })()
     return () => {
       ignore = true
-      setLoadingSuggestions(false)
+      setLoadingTagSuggestions(false)
     }
-  }, [isOpen, suggestionsLoaded, loadingSuggestions])
+  }, [isOpen, tagSuggestionsLoaded, loadingTagSuggestions])
 
-  const handleRetrySuggestions = useCallback(() => {
-    if (loadingSuggestions) return
-    setSuggestionsLoaded(false)
-  }, [loadingSuggestions])
+  const handleRetryTagSuggestions = useCallback(() => {
+    if (loadingTagSuggestions) return
+    setTagSuggestionsLoaded(false)
+  }, [loadingTagSuggestions])
 
   const handleFieldChange = useCallback((field) => {
     return (event) => {
       const { value } = event.target
-      setForm((prev) => ({ ...prev, [field]: value }))
+      const trimmedValue = value.trim().toLowerCase()
+      setForm((prev) => {
+        const next = { ...prev, [field]: value }
+        if (field === 'book') {
+          const suggestion = bookOptionLookup.get(trimmedValue)
+          const hasAuthor = (prev.author || '').trim().length > 0
+          if (suggestion?.author && !hasAuthor) {
+            next.author = suggestion.author
+          }
+        }
+        return next
+      })
       if (formError) setFormError(null)
     }
-  }, [formError])
-
-  const handleTagChange = useCallback((tags) => {
-    setForm((prev) => ({ ...prev, tags }))
-    if (formError) setFormError(null)
-  }, [formError])
+  }, [formError, bookOptionLookup])
 
   const handleSubmit = async (event) => {
     event.preventDefault()
@@ -416,9 +416,6 @@ export function AddSnippetProvider({ children }) {
       setIsOpen(false)
       resetForm()
       setSubmitting(false)
-      if (trimmedBook) {
-        setBookOptions((prev) => addSuggestionIfMissing(prev, trimmedBook))
-      }
       if (form.tags.length > 0) {
         setTagOptions((prev) => {
           let next = prev
@@ -534,22 +531,26 @@ export function AddSnippetProvider({ children }) {
                   autoComplete="off"
                 />
                 <datalist id={bookListId}>
-                  {bookOptions.map((book) => (
-                    <option key={book.toLowerCase()} value={book} />
+                  {bookOptions.map((option, index) => (
+                    <option
+                      key={`${option.source}:${option.value.toLowerCase()}:${index}`}
+                      value={option.value}
+                      label={option.label !== option.value ? option.label : undefined}
+                    />
                   ))}
                 </datalist>
                 <div className="form-text">
-                  {loadingSuggestions
-                    ? 'Loading book suggestions…'
-                    : bookSuggestionsError || 'Autocomplete finds previous books instantly.'}
+                  {loadingBookSuggestions
+                    ? 'Searching books…'
+                    : bookSuggestionsError || 'Start typing to search our catalog or Google Books.'}
                 </div>
                 {bookSuggestionsError ? (
                   <button
                     type="button"
                     className="btn btn-link btn-sm p-0 mt-1"
-                    onClick={handleRetrySuggestions}
+                    onClick={retryBookSuggestions}
                   >
-                    Retry loading suggestions
+                    Retry search
                   </button>
                 ) : null}
               </div>
@@ -629,7 +630,7 @@ export function AddSnippetProvider({ children }) {
                   placeholder="Add a tag and press Enter"
                 />
                 <div className="form-text">
-                  {loadingSuggestions
+                  {loadingTagSuggestions
                     ? 'Loading tag suggestions…'
                     : tagSuggestionsError || 'Use Enter, Tab, or comma to add tags on the fly.'}
                 </div>
@@ -637,7 +638,7 @@ export function AddSnippetProvider({ children }) {
                   <button
                     type="button"
                     className="btn btn-link btn-sm p-0 mt-1"
-                    onClick={handleRetrySuggestions}
+                    onClick={handleRetryTagSuggestions}
                   >
                     Retry loading suggestions
                   </button>

@@ -150,6 +150,22 @@ export async function listBooks(params = {}) {
   return data
 }
 
+export async function searchBookCatalog(params = {}) {
+  const query = {}
+  if (params.limit) query.limit = params.limit
+  if (params.q) query.q = params.q
+  const { data } = await api.get('/books/catalog/search', { params: query })
+  return data
+}
+
+export async function searchGoogleBooks(params = {}) {
+  const query = {}
+  if (params.limit) query.limit = params.limit
+  if (params.q) query.q = params.q
+  const { data } = await api.get('/books/google', { params: query })
+  return data
+}
+
 export async function listTags(params = {}) {
   const query = {}
   if (params.limit) query.limit = params.limit

@@ -13,7 +13,7 @@ from collections import defaultdict
 from datetime import datetime, date, timedelta
 from pathlib import Path
 from threading import Lock
-from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, Iterable, List, Literal, NamedTuple, Optional, Sequence, Set, Tuple
 
 from fastapi import (
     BackgroundTasks,
@@ -30,6 +30,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import psycopg2
 import psycopg2.extras
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, conint, constr, model_validator
+from urllib import error as urllib_error, parse as urllib_parse, request as urllib_request
 from dotenv import load_dotenv
 from jose import JWTError, jwt
 from passlib.hash import bcrypt
@@ -126,6 +127,7 @@ SESSION_COOKIE_NAME = os.getenv("SESSION_COOKIE_NAME", "session")
 SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", "0").lower() in {"1", "true", "yes"}
 
 logger = logging.getLogger("trending_refresh")
+books_logger = logging.getLogger("book_suggestions")
 
 ONBOARDING_TOKEN_TTL_MINUTES = int(os.getenv("ONBOARDING_TOKEN_TTL_MINUTES", str(48 * 60)))
 PASSWORD_RESET_TOKEN_TTL_MINUTES = int(os.getenv("PASSWORD_RESET_TOKEN_TTL_MINUTES", "60"))
@@ -459,6 +461,52 @@ def send_password_reset_email(
 def get_conn():
     return psycopg2.connect(**DB_CFG)
 
+def ensure_book_catalog_entry(
+    conn: psycopg2.extensions.connection,
+    title: Optional[str],
+    author: Optional[str],
+    *,
+    isbn: Optional[str] = None,
+    google_volume_id: Optional[str] = None,
+) -> None:
+    normalized_title = (title or "").strip()
+    if not normalized_title:
+        return
+    normalized_author = (author or "").strip()
+    author_for_lookup = normalized_author.lower() if normalized_author else ""
+    title_for_lookup = normalized_title.lower()
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT id
+            FROM book_catalog
+            WHERE LOWER(TRIM(title)) = %s
+              AND COALESCE(LOWER(TRIM(author)), '') = %s
+            """,
+            (title_for_lookup, author_for_lookup),
+        )
+        row = cur.fetchone()
+        if row:
+            cur.execute(
+                """
+                UPDATE book_catalog
+                SET updated_utc = NOW(),
+                    isbn = COALESCE(%s, isbn),
+                    google_volume_id = COALESCE(%s, google_volume_id)
+                WHERE id = %s
+                """,
+                (isbn, google_volume_id, row[0]),
+            )
+        else:
+            cur.execute(
+                """
+                INSERT INTO book_catalog (title, author, isbn, google_volume_id)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (normalized_title, normalized_author or None, isbn, google_volume_id),
+            )
+
 def _queue_analytics_event(event: Dict[str, Any]) -> None:
     queue = getattr(app.state, "analytics_queue", None)
     if queue:
@@ -513,6 +561,15 @@ class TagSummary(TagOut):
 class BookSummary(BaseModel):
     name: str
     usage_count: int
+
+class BookSuggestion(BaseModel):
+    title: str
+    author: Optional[str] = None
+    source: Literal["catalog", "google"] = "catalog"
+    isbn: Optional[str] = None
+    google_volume_id: Optional[str] = Field(default=None, alias="googleVolumeId")
+
+    model_config = ConfigDict(populate_by_name=True)
 
 class SnippetCreate(SnippetBase):
     group_id: Optional[int] = None
@@ -2016,6 +2073,99 @@ def delete_saved_search_endpoint(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Saved search not found")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
+@app.get("/api/books/catalog/search", response_model=List[BookSuggestion])
+def search_book_catalog(
+    q: str = Query(..., min_length=1, max_length=200),
+    limit: int = Query(12, ge=1, le=100),
+):
+    search = q.strip()
+    if not search:
+        return []
+    like_pattern = f"%{search.lower()}%"
+
+    with get_conn() as conn, conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+        cur.execute(
+            """
+            SELECT title, author, isbn, google_volume_id
+            FROM book_catalog
+            WHERE LOWER(TRIM(title)) LIKE %s
+               OR LOWER(TRIM(COALESCE(author, ''))) LIKE %s
+            ORDER BY LOWER(TRIM(title))
+            LIMIT %s
+            """,
+            (like_pattern, like_pattern, limit),
+        )
+        rows = cur.fetchall()
+
+    suggestions: List[BookSuggestion] = []
+    for row in rows:
+        title = (row["title"] or "").strip()
+        if not title:
+            continue
+        author = (row["author"] or "").strip() or None
+        suggestions.append(
+            BookSuggestion(
+                title=title,
+                author=author,
+                source="catalog",
+                isbn=row.get("isbn"),
+                google_volume_id=row.get("google_volume_id"),
+            )
+        )
+
+    return suggestions
+
+
+@app.get("/api/books/google", response_model=List[BookSuggestion])
+def search_google_books(
+    q: str = Query(..., min_length=5, max_length=200),
+    limit: int = Query(12, ge=1, le=40),
+):
+    search = q.strip()
+    if len(search) < 5:
+        return []
+
+    params = {"q": search, "maxResults": min(limit, 40)}
+    query_string = urllib_parse.urlencode(params)
+    url = f"{GOOGLE_BOOKS_API_URL}?{query_string}"
+    try:
+        with urllib_request.urlopen(url, timeout=5.0) as response:
+            body = response.read()
+        payload = json.loads(body.decode("utf-8"))
+    except (urllib_error.URLError, urllib_error.HTTPError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        books_logger.warning(
+            "Google Books lookup failed",
+            extra={"book_query": search, "error": str(exc)},
+        )
+        return []
+
+    items = payload.get("items") or []
+    suggestions: List[BookSuggestion] = []
+    for item in items:
+        volume_info = item.get("volumeInfo") or {}
+        title = (volume_info.get("title") or "").strip()
+        if not title:
+            continue
+        authors = [author.strip() for author in volume_info.get("authors") or [] if author and author.strip()]
+        author_value = ", ".join(authors) if authors else None
+        isbn_value: Optional[str] = None
+        for identifier in volume_info.get("industryIdentifiers") or []:
+            id_type = (identifier.get("type") or "").upper()
+            if id_type == "ISBN_13" and identifier.get("identifier"):
+                isbn_value = identifier.get("identifier")
+                break
+        suggestions.append(
+            BookSuggestion(
+                title=title,
+                author=author_value,
+                source="google",
+                isbn=isbn_value,
+                google_volume_id=item.get("id"),
+            )
+        )
+
+    return suggestions
+
 @app.get("/api/books", response_model=List[BookSummary])
 def list_books(
     q: Optional[str] = Query(default=None, min_length=0, max_length=200),
@@ -2142,6 +2292,7 @@ def create_snippet(
             )
             new_id = cur.fetchone()[0]
 
+        ensure_book_catalog_entry(conn, payload.book_name, payload.book_author)
         tags = upsert_tags(conn, payload.tags)
         if tags:
             link_tags_to_snippet(conn, new_id, tags)
@@ -2205,6 +2356,13 @@ def update_snippet(
                     f"UPDATE snippets SET {', '.join(set_clauses)} WHERE id = %s",
                     update_values,
                 )
+        
+        if "book_name" in updates or "book_author" in updates:
+            ensure_book_catalog_entry(
+                conn,
+                updates.get("book_name", snippet.book_name),
+                updates.get("book_author", snippet.book_author),
+            )
 
         if tag_updates is not None:
             new_tags = upsert_tags(conn, tag_updates)
@@ -2554,3 +2712,4 @@ except ModuleNotFoundError as exc:
     import groups as group_routes  # type: ignore[no-redef]
 
 app.include_router(group_routes.router)
+GOOGLE_BOOKS_API_URL = "https://www.googleapis.com/books/v1/volumes"
